@@ -899,10 +899,10 @@ def gen_figure(solution, side):
 
 	fig = plt.figure(figsize=(16,8))
 	ax = fig.add_subplot(231)
-	ax.imshow(np.flip(solution[side]['artifact_marker'],0), cmap='gray',alpha=1, vmin=cscale[0], vmax=cscale[1],origin='lower')
+	ax.imshow(solution[side]['artifact_marker'].T, cmap='gray',alpha=1, vmin=cscale[0], vmax=cscale[1])
 	ax.plot(solution[side]['vector'][:,0], solution[side]['vector'][:,1], '-g')
 	#ax.set_xticks([]),ax.set_yticks([])
-	
+	ax.invert_yaxis(),ax.invert_xaxis()
 	ax.scatter(solution[side]['vector'][solution[side]['peaks'],0], solution[side]['vector'][solution[side]['peaks'],1],s=20, color='g',alpha=1)
 	
 	ax.scatter(solution[side]['vector'][solution[side]['finalpeak'],0], 
