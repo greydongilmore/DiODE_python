@@ -442,6 +442,7 @@ def ea_diode_intensitypeaksdirmarker(intensity,angles):
 	
 	return sumintensity
 
+
 def leastSquares(A, y):
 	orig_shape=y.shape
 	if orig_shape[0]<2:
@@ -452,6 +453,7 @@ def leastSquares(A, y):
 
 def modelFun(x, m, b):
 	return m * x + b
+
 
 def testFit(x,y):
 	popt = sp.optimize.curve_fit(modelFun, x, y)
@@ -511,24 +513,24 @@ def ea_diode_auto(ctpath, head_mm_initial, unitvector_mm, elspec):
 	
 	# fit linear model to the centers of mass and recalculate head and unitvector
 	new = np.arange(0,samplelength,.5)
-
+	
 	lmx = LinearRegression()
 	xmdl = lmx.fit(new.reshape(-1, 1),newcentervector_mm[0,:])
-
+	
 	lmy = LinearRegression()
 	ymdl = lmy.fit(new.reshape(-1, 1),newcentervector_mm[1,:])
-
+	
 	lmz = LinearRegression()
 	zmdl = lmz.fit(new.reshape(-1, 1),newcentervector_mm[2,:])
 	
 	head_mm = np.array([xmdl.predict(np.array(0).reshape(1,-1))[0],
 			ymdl.predict(np.array(0).reshape(1,-1))[0],
 			zmdl.predict(np.array(0).reshape(1,-1))[0],1])
-
+	
 	other_mm = np.array([xmdl.predict(np.array(10).reshape(1,-1))[0],
 			ymdl.predict(np.array(10).reshape(1,-1))[0],
 			zmdl.predict(np.array(10).reshape(1,-1))[0],1])
-
+	
 	unitvector_mm = (other_mm - head_mm)/np.linalg.norm(other_mm - head_mm)
 	
 	# calculate locations of markers and directional levels
@@ -1022,7 +1024,6 @@ def gen_figure(solution, side, save_fig=False):
 	ax.text(xlimit[x_idx]-0.1*np.mean(xlimit),np.mean(ylimit),'R',color='b', **text_options)
 	ax.set_title('Directional Level', **subtitle_text_options)
 	
-	
 	sol_tran=f"COM-Transversal Solution: {solution[side]['rolls_deg'][solution[side]['COGtrans']]:.2f}"
 	sol_sag=f"COM-Sagittal Solution: {solution[side]['rolls_deg'][solution[side]['COGsag']]:.2f}"
 	sol_star=f"STARS Solution: {solution[side]['rolls_deg'][solution[side]['Darkstar']]:.2f}"
@@ -1037,7 +1038,6 @@ def gen_figure(solution, side, save_fig=False):
 	ax.text(-.05, -.7,pol_ang, transform=ax.transAxes, **surround_text_options)
 	ax.text(-.05, -.8,resol, transform=ax.transAxes, **surround_text_options)
 	
-	
 	ax = fig.add_subplot(235)
 	ax.plot(np.rad2deg(solution[side]['anglenew']), solution[side]['intensitynew'])
 	ax.set_yticks([])
@@ -1050,7 +1050,6 @@ def gen_figure(solution, side, save_fig=False):
 			  np.max([solution[side]['intensity'], solution[side]['intensitynew']])+50)
 	
 	ax.set_title('Intensity Profile', **subtitle_text_options)
-	
 	
 	ax = fig.add_subplot(236)
 	ax.plot(np.rad2deg(solution[side]['rollangles_final'][solution[side]['realsolution']]),
@@ -1147,7 +1146,7 @@ for subji in ('sub-P239', 'sub-P240'):
 			solution[iside] = ea_diode_auto(ctpath, head_mm_initial, unitvector_mm, elspec)
 	
 	for iside in list(solution):
-		gen_figure(solution, iside, save_fig=True)
+		gen_figure(solution, iside, save_fig=False)
 
 
 
