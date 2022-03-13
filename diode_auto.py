@@ -534,15 +534,16 @@ def ea_diode_auto(ctpath, head_mm_initial, unitvector_mm, elspec):
 	unitvector_mm = (other_mm - head_mm)/np.linalg.norm(other_mm - head_mm)
 	
 	# calculate locations of markers and directional levels
-	tail_mm = head_mm + (6 * unitvector_mm)
-	marker_mm = head_mm + (markercenterRelative * unitvector_mm)
-	dirlevel1_mm =head_mm + (level1centerRelative * unitvector_mm)
-	dirlevel2_mm =head_mm + (level2centerRelative * unitvector_mm)
+	tail_mm = head_mm_initial + (6 * unitvector_mm)
+	marker_mm = head_mm_initial + (markercenterRelative * unitvector_mm)
+	dirlevel1_mm =head_mm_initial + (level1centerRelative * unitvector_mm)
+	dirlevel2_mm =head_mm_initial + (level2centerRelative * unitvector_mm)
 	
 	# transform to vx
-	marker_vx = np.round(leastSquares(ct_obj.affine, marker_mm),4)
-	dirlevel1_vx = np.round(leastSquares(ct_obj.affine, dirlevel1_mm,),4)
-	dirlevel2_vx = np.round(leastSquares(ct_obj.affine, dirlevel2_mm),4)
+	marker_vx = np.round(leastSquares(ct_obj.affine, np.append(marker_mm,1)),4)
+	dirlevel1_vx = np.round(leastSquares(ct_obj.affine, np.append(dirlevel1_mm,1),),4)
+	dirlevel2_vx = np.round(leastSquares(ct_obj.affine, np.append(dirlevel2_mm,1)),4)
+	
 	
 	# in DiODe v2 only one directional level is used, starting at the
 	# middle between both directional levels and being optimized later
@@ -584,7 +585,7 @@ def ea_diode_auto(ctpath, head_mm_initial, unitvector_mm, elspec):
 	center_marker = np.c_[(artifact_marker.shape[0])/2, (artifact_marker.shape[0])/2][0]
 	
 	# extract intensity profile from marker artifact
-	radius = 4
+	radius = 3
 	angle_out, intensity, vector = ea_diode_intensityprofile(artifact_marker,center_marker,voxsize,radius)
 	
 	# detect peaks and valleys for marker artifact
@@ -1114,7 +1115,7 @@ def gen_figure(solution, side, save_fig=False):
 
 data_path=r'/home/greydon/Documents/GitHub/DiODE_python/data'
 
-subji='sub-P241'
+subji='sub-P231'
 
 
 for subji in ('sub-P239', 'sub-P240'):
@@ -1143,6 +1144,7 @@ for subji in ('sub-P239', 'sub-P240'):
 			elspec = diode_elspec[elmodel]
 			
 			unitvector_mm = (tail_mm_initial - head_mm_initial)/np.linalg.norm(tail_mm_initial - head_mm_initial)
+			
 			solution[iside] = ea_diode_auto(ctpath, head_mm_initial, unitvector_mm, elspec)
 	
 	for iside in list(solution):
