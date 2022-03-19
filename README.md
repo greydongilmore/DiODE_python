@@ -84,7 +84,7 @@ To get a local copy up and running follow these simple steps.
 3. Install the required Python packages:
 
     ```sh
-    python -m pip install -r requirements.txt
+    python3 -m pip install -r requirements.txt
     ```
 
 
@@ -98,11 +98,11 @@ To get a local copy up and running follow these simple steps.
 
 2. Run the following to execute the epoch script:
     ```sh
-    DiODE_python main.py -i "full/path/to/nifti_file" -e 'electrode_name' -rh -14.95,24.64,52.19 -rt -21.24,8.84,72.19 -lh 5.43,25.12,52.28 -lt 15.08,12.11,71.03
+    python3 main.py -i "full/path/to/nifti_file" -e 'electrode_name' -rh -14.95,24.64,52.19 -rt -21.24,8.84,72.19 -lh 5.43,25.12,52.28 -lt 15.08,12.11,71.03
     ```
     or
     ```sh
-    DiODE_python main.py -i "full/path/to/nifti_file" -e 'electrode_name' -fcsv 'full/path/to/fcsv_coords'
+    python3 main.py -i "full/path/to/nifti_file" -e 'electrode_name' -fcsv 'full/path/to/fcsv_coords'
     ```
 
   * **-i:** full directory path to the postoperative CT scan with electrodes (in `nii.gz`)
