@@ -9,7 +9,8 @@ import pandas as pd
 import csv
 from skimage import measure
 from sklearn.linear_model import LinearRegression
-
+import os
+import argparse
 
 from diode_elspec import electrodeModels
 
@@ -54,7 +55,7 @@ def ea_sample_slice(vol, tracor, wsize, voxmm, coords, el, interp_order=2):
 				np.tile(coords[2],(1, len(boundbox[0])))[0]
 			])
 		# need to flip x and y here
-		xi, yi= np.meshgrid(boundbox[0],boundbox[1])
+		yi, xi= np.meshgrid(boundbox[0],boundbox[1])
 		zi = np.tile(boundbox[2][0], (xi.shape))
 		sampleheight=(vol.affine @ np.array([1,1, boundbox[2][0],1]))[2]
 	elif tracor == 'cor':
@@ -198,8 +199,8 @@ def ea_diode_intensitypeaksFFT(intensity, noPeaks):
 	and finds the angle at which the sum of all peaks is highest.
 	"""
 	
-	fftint = np.fft.fft(intensity)
-	fftpart = fftint[noPeaks+1]
+	fftint = np.fft.fft(intensity.T)
+	fftpart = fftint[noPeaks]
 	amplitude = abs(fftpart)
 	phase = -math.asin(np.real(fftpart) / amplitude)
 	
@@ -213,7 +214,7 @@ def ea_diode_intensitypeaksFFT(intensity, noPeaks):
 	level = max(intensity) - amplitude
 	
 	sprofil=[]
-	for k in range(0,360):
+	for k in range(1,361):
 		sprofil.append(amplitude * math.sin(np.deg2rad(noPeaks*k)-phase) + level)
 	sprofil=np.array(sprofil)
 	
@@ -234,35 +235,31 @@ def ea_diode_intensitypeaksFFT(intensity, noPeaks):
 	
 	return peak,sprofil
 
-def peak_FFT(valSlice1,noPeaks=2):
-	M = np.fft.fft(valSlice1)
-	fftpart = M[noPeaks+1]
-	amplitude = (max(valSlice1) + abs(min(valSlice1))) / 2
-	phase = -math.sin (np.real(fftpart) / amplitude)
-	m = max(abs(M))
-	M[np.where(abs(M) < 0.99 * m)] = 0
-	denoised_val = np.fft.ifft(M)
-	angles = denoised_val.argsort()[-2:]
-	print(f"Peak angles (in degrees): {angles[0]}, {angles[1]}")
 
-# 	phase = 0
-# 	for i in range(359):
-# 		if denoised_val[i] == 0:
-# 			phase = i
-# 			break
-# 		elif denoised_val[i] * denoised_val[i + 1] < 0:
-# 			phase = i + 0.5
-# 			break
-# 	
-	level = max(valSlice1) - amplitude
-	sprofil=np.zeros(360)
-	for theta in range(360):
-		sprofil[theta]=amplitude * math.sin(np.deg2rad(noPeaks*theta)-phase) + level
+def interp3(x, y, z, vol, xi, yi, zi, interp_order=1):
+	"""Sample a 3D array "v" with pixel corner locations at "x","y","z" at the
+	points in "xi", "yi", "zi" using linear interpolation. Additional kwargs
+	are passed on to ``scipy.ndimage.map_coordinates``."""
 	
-	dangles = np.array([int(round(angles[0] + (45 - (phase / 2)))), int(round(angles[1] + (45 - phase / 2)))])
-	print(f"** Denoised peak angles (in degrees): {dangles[0]}, {dangles[1]}")
-	return dangles,angles,sprofil
-
+	Xslice_copy = x.copy()
+	Yslice_copy = y.copy()
+	Zslice_copy = z.copy()
+	
+	Xmm_copy = xi.copy()
+	Ymm_copy = yi.copy()
+	Zmm_copy = zi.copy()
+	
+	orig_shape=Xslice_copy.shape
+	
+	for arr in (Xslice_copy,Yslice_copy,Zslice_copy, Xmm_copy, Ymm_copy, Zmm_copy):
+		arr.shape=-1
+	
+	coords = [index_coords(*item) for item in zip([Xmm_copy, Ymm_copy, Zmm_copy],[Xslice_copy, Yslice_copy, Zslice_copy])]
+	
+	ima = np.empty(Xslice_copy.shape, dtype=float)
+	map_coordinates(vol, coords, order=interp_order, output=ima)
+	
+	return ima.reshape(orig_shape)
 
 def index_coords(corner_locs, interp_locs):
 	index = np.arange(len(corner_locs))
@@ -560,7 +557,7 @@ def pixLookup(slice_,y,x,zpad, RGB=3):
 		if RGB==3:
 			pixVal=slice_[int(np.ceil(y)),int(np.ceil(x)),:]
 		else:
-			pixVal=slice_[int(np.ceil(y)),int(np.ceil(x))]
+			pixVal=slice_[int(np.ceil(y))-1,int(np.ceil(x))-1]
 	
 	return pixVal
 
@@ -569,18 +566,18 @@ def ea_diode_interpimage(slice_,yx,zpad=True, RGB=False):
 	if RGB == 0:
 		RGB=np.ndim(slice_)
 	
-	yx0=np.floor(yx)
+	yx0=np.floor(yx)-1
 	wt=yx-yx0
 	wtConj=1-wt
-	interTop=wtConj[1]*pixLookup(slice_,yx0[0],yx0[1],zpad,RGB) + wt[1]* pixLookup(slice_,yx0[0],yx0[1],zpad,RGB)
-	interBtm=wtConj[1]* pixLookup(slice_,yx[0],yx[1],zpad,RGB) + wt[1]* pixLookup(slice_,yx[0],yx[1],zpad,RGB)
+	interTop=wtConj[1]*pixLookup(slice_,yx0[0],yx0[1],zpad,RGB) + wt[1]* pixLookup(slice_,yx0[0],yx[1],zpad,RGB)
+	interBtm=wtConj[1]* pixLookup(slice_,yx[0],yx0[1],zpad,RGB) + wt[1]* pixLookup(slice_,yx[0],yx[1],zpad,RGB)
 	interVal=wtConj[0]*interTop + wt[0]* interBtm
 
 	return interVal
 
 def intensityprofile(slice_,center,voxsize,radius):
-	radius = radius * 2
-	vector = np.c_[0,1] * (radius / voxsize[0])
+	radius_tmp = radius * 2
+	vector = np.c_[0,1] * (radius_tmp / voxsize[0])
 	vectornew = []
 	angle = []
 	intensity = []
@@ -589,13 +586,214 @@ def intensityprofile(slice_,center,voxsize,radius):
 		rotmat = np.r_[np.c_[math.cos(theta),math.sin(theta)], np.c_[-math.sin(theta),math.cos(theta)]]
 		vectornew.append((vector @ rotmat)[0] + center)
 		angle.append(theta)
-		intensity.append(ea_diode_interpimage(slice_, vectornew[-1][::-1]))
+		intensity.append(ea_diode_interpimage(slice_, vectornew[-1]))
 	
 	vectornew=np.stack(vectornew)
-	return angle, np.array(intensity)[::-1],vectornew
+	return angle, np.array(intensity),vectornew
 
-
-#%%
+def generate_figure(solution, save_fig=True):
+	
+	for key,val in solution.items():
+		exec(key + '=val')
+	
+	subtitle_text_options={
+		'fontsize': 16, 
+		'fontweight': 'bold'
+		}
+	
+	text_options = {'horizontalalignment': 'center',
+					'verticalalignment': 'center',
+					'fontsize': 18,
+					'fontweight': 'bold'}
+	
+	surround_text_options={
+		'fontsize': 14, 
+		'fontweight': 'bold'
+		}
+	
+	x_idx=1
+	y_idx=0
+	
+	fig = plt.figure(figsize=(12,9))
+	ax = fig.add_subplot(231)
+	ax.imshow(solution['slice1'], cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
+	ax.plot(solution['vector'][:,x_idx], solution['vector'][:,y_idx], ':g')
+	ax.set_xticks([]),ax.set_yticks([])
+	
+	ax.scatter(solution['vector'][solution['peaks'],x_idx],
+			solution['vector'][solution['peaks'],y_idx],
+			s=80, edgecolors='g',color='none',alpha=1)
+	
+	ax.scatter(solution['vector'][solution['finalpeak'],x_idx], 
+		solution['vector'][solution['finalpeak'],0],
+		s=80, color='g',alpha=1)
+	
+	ax.quiver(solution['center_marker'][x_idx],
+		solution['center_marker'][y_idx], 
+		solution['vector'][solution['finalpeak'],x_idx] - solution['center_marker'][x_idx],
+		solution['vector'][solution['finalpeak'],y_idx] - solution['center_marker'][y_idx],
+		linewidth=2,ec='g', angles='xy', scale=.75,scale_units='xy')
+	
+	ax.scatter(solution['center_marker'][x_idx],
+		solution['center_marker'][y_idx],
+		s=100, color='m',alpha=1)
+	
+	for k in solution['valley']:
+		xp=[solution['center_marker'][x_idx],(solution['center_marker'][x_idx] + 1.5 * (solution['vector'][k,x_idx]-solution['center_marker'][x_idx]))]
+		yp=[solution['center_marker'][y_idx],(solution['center_marker'][y_idx] + 1.5 * (solution['vector'][k,y_idx]-solution['center_marker'][y_idx]))]
+		ax.plot(xp, yp, '-r')
+	
+	xlimit=ax.get_xlim()
+	ylimit=ax.get_ylim()
+	ax.text(np.mean(xlimit),ylimit[y_idx]-.15* np.mean(ylimit),'A', color='b',**text_options)
+	ax.text(np.mean(xlimit),ylimit[x_idx]+.15* np.mean(ylimit),'P', color='b',**text_options)
+	ax.text(xlimit[y_idx]+0.1*np.mean(xlimit),np.mean(ylimit),'L', color='b',**text_options)
+	ax.text(xlimit[x_idx]-0.1*np.mean(xlimit),np.mean(ylimit),'R',color='b', **text_options)
+	ax.set_title('Axial View', **subtitle_text_options)
+	
+	
+	ax = fig.add_subplot(232)
+	ax.plot(np.rad2deg(solution['angle']), solution['intensity'])
+	ax.plot(np.rad2deg(solution['angle']), solution['markerfft'])
+	ax.set_xlim(0,361)
+	ax.set_ylim(np.min([solution['intensity'], solution['intensitynew']])-50,
+			  np.max([solution['intensity'], solution['intensitynew']])+50)
+	ax.set_yticks([])
+	
+	ax.scatter(np.rad2deg(np.array(solution['angle'])[solution['peaks']]),
+		solution['intensity'][solution['peaks']],
+		s=120, edgecolors='g', color='none', alpha=1)
+	
+	ax.scatter(np.rad2deg(np.array(solution['angle'])[solution['finalpeak']]),
+			solution['intensity'][solution['finalpeak']],
+			s=35, facecolors='g', edgecolors='g',alpha=1)
+	
+	ax.scatter(np.rad2deg(np.array(solution['angle'])[solution['valley']]),
+			solution['intensity'][solution['valley']],
+			s=35, facecolors='none', edgecolors='r',alpha=1)
+	
+	ax.set_title('Intensity Profile', **subtitle_text_options)
+	
+	ax = fig.add_subplot(233)
+	ax.imshow(solution['finalslice'], cmap='gray',alpha=1, vmin=1500, vmax=3000,origin='lower')
+	ax.set_xticks([]),ax.set_yticks([])
+	ax.set_title('Sagittal View', **subtitle_text_options)
+	
+	peakangle=np.array(solution['angle'])[solution['finalpeak']]
+	if peakangle > np.pi:
+		peakangle = peakangle- 2 * np.pi
+	
+	rollnew=solution['rollnew']+solution['rollangles_final'][solution['realsolution']][solution['darkstarangle'][solution['realsolution']]]
+	
+	
+	ax = fig.add_subplot(234)
+	ax.imshow(solution['slice2'], cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
+	ax.set_xticks([]),ax.set_yticks([])
+	ax.set_title('Directional Level', **subtitle_text_options)
+	ax.plot(solution['vectornew'][:,1], solution['vectornew'][:,0], '-g')
+	ax.set_xticks([]),ax.set_yticks([])
+	
+	ax.scatter(solution['vectornew'][[int(x) for x in solution['dirnew_valleys'].tolist()],1], 
+			   solution['vectornew'][[int(x) for x in solution['dirnew_valleys'].tolist()],0],s=80, color='g',alpha=1)
+	
+	for k in [int(x) for x in solution['dirnew_valleys']]:
+		xp=[solution['center_dirnew'][0],(solution['center_dirnew'][0] + 1.5 * (solution['vectornew'][k,1]-solution['center_dirnew'][0]))]
+		yp=[solution['center_dirnew'][1],(solution['center_dirnew'][1] + 1.5 * (solution['vectornew'][k,0]-solution['center_dirnew'][1]))]
+		ax.plot(xp, yp, '-r')
+	
+	ax.scatter(solution['center_dirnew'][0],
+		solution['center_dirnew'][1],
+		s=100, color='m',alpha=1)
+	
+	xlimit=ax.get_xlim()
+	ylimit=ax.get_ylim()
+	ax.text(np.mean(xlimit),ylimit[1]-.15* np.mean(ylimit),'A', color='b',**text_options)
+	ax.text(np.mean(xlimit),ylimit[0]+.15* np.mean(ylimit),'P', color='b',**text_options)
+	ax.text(xlimit[1]+0.1*np.mean(xlimit),np.mean(ylimit),'L', color='b',**text_options)
+	ax.text(xlimit[0]-0.1*np.mean(xlimit),np.mean(ylimit),'R',color='b', **text_options)
+	ax.set_title('Directional Level', **subtitle_text_options)
+	
+	sol_tran=f"COM-Transversal Solution: {solution['rolls_deg'][solution['cog_trans_solution']]:.2f}"
+	sol_sag=f"COM-Sagittal Solution: {solution['rolls_deg'][solution['cog_sag_solution']]:.2f}"
+	sol_star=f"STARS Solution: {solution['rolls_deg'][solution['darkstar_solution']]:.2f}"
+	sol_asm=f"ASM Solution: {solution['rolls_deg'][solution['asm_solution']]:.2f}"
+	pol_ang=f"Polar Angle: {abs(solution['polar1']):.0f}"
+	resol=f"CT Resolution: {solution['voxsize'][0]:.2f}x{solution['voxsize'][1]:.2f}x{solution['voxsize'][2]:.2f} mm"
+	
+	ax.text(-.05, -.3,sol_tran, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.4,sol_sag, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.5,sol_star, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.6,sol_asm, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.7,pol_ang, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.8,resol, transform=ax.transAxes, **surround_text_options)
+	
+	ax = fig.add_subplot(235)
+	ax.plot(np.rad2deg(solution['anglenew']), solution['intensitynew'])
+	ax.set_yticks([])
+	ax.scatter(np.rad2deg(np.array(solution['anglenew'])[[int(x) for x in solution['dirnew_valleys'].tolist()]]), 
+			   solution['intensitynew'][[int(x) for x in solution['dirnew_valleys'].tolist()]],
+			   s=120, edgecolors='r', color='none', alpha=1)
+	
+	ax.set_xlim(0,361)
+	ax.set_ylim(np.min([solution['intensity'], solution['intensitynew']])-50,
+			  np.max([solution['intensity'], solution['intensitynew']])+50)
+	
+	ax.set_title('Intensity Profile', **subtitle_text_options)
+	
+	ax = fig.add_subplot(236)
+	ax.plot(np.rad2deg(solution['rollangles_final'][solution['realsolution']]),
+			solution['sumintensitynew_final'][solution['realsolution']])
+	ax.set_yticks([])
+	ax.plot(np.rad2deg(solution['rollangles_final'][int(not(solution['realsolution']))]),
+			solution['sumintensitynew_final'][int(not(solution['realsolution']))],
+			color='r',alpha=1)
+	
+	ax.scatter(np.rad2deg(solution['rollangles_final'][solution['realsolution']][solution['rollangles_final'][solution['realsolution']]==0]), 
+			   solution['sumintensitynew_final'][solution['realsolution']][solution['rollangles_final'][solution['realsolution']]==0],
+			   s=120, color='g',alpha=1)
+	
+	ax.scatter(np.rad2deg(solution['rollangles_final'][solution['realsolution']][solution['darkstarangle'][solution['realsolution']]]), 
+			   solution['sumintensitynew_final'][solution['realsolution']][solution['darkstarangle'][solution['realsolution']]],
+			   s=120, edgecolors='r', color='none', alpha=1)
+	
+	xy_arrow=(np.rad2deg(solution['rollangles_final'][solution['realsolution']][solution['darkstarangle'][solution['realsolution']]]),
+			solution['sumintensitynew_final'][solution['realsolution']][solution['darkstarangle'][solution['realsolution']]])
+	
+	text_arrow="{:.0f}".format(np.round(solution['sumintensitynew_final'][solution['realsolution']][solution['darkstarangle'][solution['realsolution']]],0))
+	
+	ax.annotate(text_arrow, xy=xy_arrow, xycoords='data',xytext=(xy_arrow[0]+10, xy_arrow[1]+10), arrowprops=dict(arrowstyle="->", color='black',linewidth=2), fontsize=14)
+	
+	ax.set_xlim([np.rad2deg(solution['rollangles_final'][0][0]),
+			  np.rad2deg(solution['rollangles_final'][0][-1]-(solution['rollangles_final'][0][-2]-solution['rollangles_final'][0][-1]))])
+	
+	ax.set_title('Similarity Index', **subtitle_text_options)
+	
+	art_ang=f"Artifact Angle: {np.rad2deg(peakangle):.2f}"
+	mrk_ang=f"Marker Angle: {np.rad2deg(solution['rollnew']):.2f}"
+	dir_shift=f"Dir-Level Shift: {np.rad2deg(solution['rollangles_final'][solution['realsolution']][solution['darkstarangle'][solution['realsolution']]]):.2f}"
+	roll_new=f"Corrected Angle: {np.rad2deg(rollnew):.2f}"
+	
+	ax.text(-.05, -.3,art_ang, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.4,mrk_ang, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05,-.5,dir_shift, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.6,roll_new, transform=ax.transAxes, **surround_text_options)
+	
+	sub_str=f"{os.path.basename(solution['ct_path']).split('.nii')[0]} {solution['side'].title()} Side"
+	
+	plt.suptitle(sub_str, fontsize=20, fontweight='bold')
+	
+	fig.subplots_adjust(hspace=.3, bottom=0.25)
+	
+	if save_fig:
+		out_fig_path=os.path.join(os.path.dirname(solution['ct_path']),'imgs')
+		if not os.path.exists(out_fig_path):
+			os.makedirs(out_fig_path)
+		
+		base_name= os.path.join(out_fig_path, os.path.basename(solution['ct_path']).split('.nii')[0])
+		plt.savefig(base_name + f"_side-{solution['side']}.svg", transparent=True)
+		plt.savefig(base_name + f"_side-{solution['side']}.png",transparent=True,dpi=300)
+		plt.savefig(base_name + f"_side-{solution['side']}_white.png",transparent=False,dpi=300)
+		plt.close()
 
 
 def main(args):
@@ -645,8 +843,8 @@ def main(args):
 	elspec = electrodeModels[elmodel]
 	
 	for iside in list(marker_dict):
-		head_mm_initial = np.asarray(marker_dict[iside]['head']).astype(int)
-		tail_mm_initial = np.asarray(marker_dict[iside]['tail']).astype(int)
+		head_mm_initial = marker_dict[iside]['head']
+		tail_mm_initial = marker_dict[iside]['tail']
 		unitvector_mm_initial = (tail_mm_initial - head_mm_initial)/np.linalg.norm(tail_mm_initial - head_mm_initial)
 		
 		level1centerRelative = elspec['contact_length'] + elspec['contact_spacing']
@@ -688,7 +886,7 @@ def main(args):
 		#newcentervector_mm = samplingvector_mm
 		
 		# fit linear model to the centers of mass and recalculate head and unitvector
-		new = np.arange(0,newcentervector_mm.shape[1]/2,.5)
+		new = np.arange(0,samplelength,.5)
 		
 		lmx = LinearRegression()
 		xmdl = lmx.fit(new.reshape(-1, 1),newcentervector_mm[0,:])
@@ -723,19 +921,17 @@ def main(args):
 		dirlevelnew_mm = np.mean(np.c_[dirlevel1_mm, dirlevel2_mm],1)
 		dirlevelnew_vx = np.round(leastSquares(img.affine, dirlevelnew_mm),0)
 		
-		segment = np.asarray(iside['tail']).astype(int)
-		
 		yaw = math.asin(unitvector_mm[0])
 		pitch = math.asin(unitvector_mm[1]/math.cos(yaw))
 		polar1 = math.degrees(math.acos(np.dot(unitvector_mm, [0, 0, 1,0])))
 		polar2 = -np.rad2deg(math.atan2(unitvector_mm[1],unitvector_mm[0]))+ 90
 		
 		assert abs(polar1) < 50, f"The angle between the lead and the slice " \
-									  f"normal is {polar_angle} degrees.\nNote that angles " \
+									  f"normal is {polar1} degrees.\nNote that angles " \
 									  f"> 50 degrees could cause inaccurate orientation estimation."
 		
 		fftdiff = []
-		checkslices = np.linspace(1,-1,5) # check neighboring slices for marker +/- 1mm in .5mm steps
+		checkslices = np.linspace(-1,1,5) # check neighboring slices for marker +/- 1mm in .5mm steps
 		for k in checkslices:
 			checklocation_mm = marker_mm + (unitvector_mm * k)
 			checklocation_vx = np.round(leastSquares(img.affine, checklocation_mm),0)
@@ -760,25 +956,31 @@ def main(args):
 		
 		print("Extract intensity profile from marker artifact")
 		# extract marker artifact from slice
-		slice1= ea_sample_slice(img,'tra', extractradius,'vox', marker_vx[:3], 1, 1)[0]
+		artifact_marker= ea_sample_slice(img,'tra', extractradius,'vox', marker_vx[:3], 1, 1)[0]
 		
-		center_marker = np.c_[(slice1.shape[0])/2, (slice1.shape[0])/2][0]
+		
+		center_marker = np.c_[(artifact_marker.shape[0])/2, (artifact_marker.shape[1])/2][0]
 		
 		# extract intensity profile from marker artifact
-		radius = 3
-		angles, intensity, vector = intensityprofile(slice1, center_marker,voxsize,radius)
+		radius = 4
+		angles, intensity, vector = intensityprofile(artifact_marker, center_marker,voxsize,radius)
 		
 		# detect peaks and valleys for marker artifact
 		peak, markerfft = ea_diode_intensitypeaksFFT(intensity, 2)
 		valley,_ = ea_diode_intensitypeaksFFT(-intensity, 2)
 		
+		# Detect angles of the white streak of the marker (only for intensityprofile-based ambiguity features)
+		valley_roll = angle2roll(angles[int(valley[0])],yaw,pitch)
+		marker_angles = lightmarker(valley_roll,pitch,yaw,marker_mm)
+	
 		ASMradii = [3,6,9]
 		ASMintensity_raw=[]
 		for k in ASMradii:
-			_, ASMintensity_tmp,_ = intensityprofile(slice1, center_marker ,voxsize, k)
-			ASMintensity_raw.append(ASMintensity_tmp.T)
+			_, ASMintensity_tmp,_ = intensityprofile(artifact_marker, center_marker ,voxsize, k)
+			ASMintensity_raw.append(ASMintensity_tmp)
 		
 		ASMintensity = np.mean(np.stack(ASMintensity_raw), 0)
+		
 		if max(ASMintensity[valley[0]:valley[1]]) > max(ASMintensity[list(range(valley[0]))+list(range(valley[1],len(ASMintensity)))]):
 			if peak[0] > valley[0] and peak[0] < valley[0]:
 				print('ASM decides for peak 1')
@@ -807,6 +1009,31 @@ def main(args):
 		
 		marker_mm=np.round(img.affine.dot(marker_vx.T),0)
 		
+		# Slice parallel for visualization
+		# a 10mm slice with .1mm resolution is sampled vertically
+		# through the lead and through the marker center and oriented
+		# in the direction of y-vec and unitvector for later
+		# visualization
+		
+		mincorner_mm = img.affine.dot(np.r_[1,1,1,1])
+		maxcorner_mm = img.affine.dot(np.r_[np.array(img.get_fdata().shape), 1])
+		
+		Xmm=np.arange(mincorner_mm[0], maxcorner_mm[0], (maxcorner_mm[0]-mincorner_mm[0])/(img.get_fdata().shape[0]))
+		Ymm=np.arange(mincorner_mm[1], maxcorner_mm[1],(maxcorner_mm[1]-mincorner_mm[1])/(img.get_fdata().shape[1]))
+		Zmm=np.arange(mincorner_mm[2], maxcorner_mm[2],(maxcorner_mm[2]-mincorner_mm[2])/(img.get_fdata().shape[2]))
+		
+		vol_new = img.get_fdata().copy()
+		
+		extract_width = 10
+		samplingres = .1
+		
+		Xslice = (np.arange(-extract_width,extract_width+samplingres,samplingres)* unitvector_mm[0]) + \
+			(np.arange(-extract_width,extract_width+samplingres,samplingres) * yvec_mm[0]).reshape(-1,1) + (head_mm_initial[0] + (7.5 * unitvector_mm[0]))
+		Yslice = (np.arange(-extract_width,extract_width+samplingres,samplingres)* unitvector_mm[1]) + \
+			(np.arange(-extract_width,extract_width+samplingres,samplingres) * yvec_mm[1]).reshape(-1,1) + (head_mm_initial[1] + (7.5 * unitvector_mm[1]))
+		Zslice = perpendicularplane(xvec_mm, marker_mm, Xslice, Yslice)
+		
+		finalslice = interp3(Xslice, Yslice, Zslice, vol_new, Xmm, Ymm, Zmm).T
 		
 		cog_trans_solution = calculateCOG(img, xvec_mm, yvec_mm, marker_mm, unitvector_mm,'trans',1)
 		
@@ -927,25 +1154,46 @@ def main(args):
 		
 		
 		solution = {}
-		solution['slice1'] = slice1
+		solution['ct_path']=args.input_ct
+		solution['side']=iside
+		solution['voxsize']=voxsize
+		solution['peaks'] = peak
+		solution['center_marker'] = center_marker
+		solution['valley'] = valley
+		solution['markerfft'] = markerfft
+		solution['intensity'] = intensity
+		solution['vector'] = vector
+		solution['angle'] = angles
+		solution['slice1']=artifact_marker
+		solution['rolls_rad'] = [angle2roll(angles[int(peak[0])],yaw,pitch),angle2roll(angles[int(peak[1])],yaw,pitch)]
+		solution['rolls_deg'] = np.rad2deg(solution['rolls_rad'])
+		solution['rolls_streak_deg'] = np.rad2deg(marker_angles)
 		solution['slice2'] = artifact_dirnew
-		solution['voxsize'] = voxsize
+		solution['finalslice'] = finalslice
 		solution['marker'] = marker_vx
-		solution['angles'] = angles
 		solution['finalpeak'] = finalpeak
+		solution['intensitynew'] = intensitynew
+		solution['vectornew'] = vectornew
+		solution['anglenew'] = anglenew
 		solution['realsolution'] = realsolution
-		solution['valSlice1'] = valSlice1
-		solution['sprofil'] = sprofil
-		solution['valSlice2'] = valSlice2
 		solution['cog_trans_solution'] = cog_trans_solution
 		solution['cog_sag_solution'] = cog_sag_solution
 		solution['darkstar_solution'] = darkstar_solution
 		solution['asm_solution'] = asm_solution
 		solution['polar1'] = polar1
-		solution['sumintensitySolutions'] = sumintensitySolutions
-		solution['rollangleSolutions'] = rollangleSolutions
+		solution['center_dirnew'] = center_dirnew
+		solution['dirnew_valleys'] = dirnew_valleys
+		solution['sumintensitynew_final'] = sumintensitynew_final
+		solution['rollnew'] = roll
+		solution['rollangles_final'] = rollangles_final
+		solution['darkstarangle'] = darkstarangle
+		solution['darkstarslice'] = darkstarslice
 		
-		generate_figure(solution)
+		return solution
+		#generate_figure(solution, False)
+
+
+#%%
 
 
 if __name__ == "__main__":
@@ -974,135 +1222,7 @@ if __name__ == "__main__":
 	parser.add_argument("-rt", dest="rt", default=None, help="Comma seperated list of RAS coordinates for right tail (x,y,z)")
 	args = parser.parse_args()
 	
-	main(args)
+	solution=main(args)
 
 
-def generate_figure(solution):
-	
-	for key,val in solution.items():
-		exec(key + '=val')
-	
-	subtitle_text_options={
-		'fontsize': 16, 
-		'fontweight': 'bold'
-		}
-	
-	text_options = {'horizontalalignment': 'center',
-					'verticalalignment': 'center',
-					'fontsize': 18,
-					'fontweight': 'bold'}
-	
-	surround_text_options={
-		'fontsize': 14, 
-		'fontweight': 'bold'
-		}
 
-	fig = plt.figure(figsize=(12,9))
-	ax = fig.add_subplot(231)
-	ax.imshow(slice1, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
-	
-	ax = fig.add_subplot(232)
-	ax.imshow(slice1, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
-	plt.xlim([marker[0]-30,marker[0]+30])
-	plt.ylim([marker[1]-30,marker[1]+30])
-	ax.plot(ySlice1,xSlice1, ':g')
-	ax.scatter(ySlice1[angles.tolist()],xSlice1[angles.tolist()],
-		s=80, edgecolors='g',color='none',alpha=1)
-	
-	ax.scatter(ySlice1[finalpeak],xSlice1[finalpeak],
-		s=80, color='g',alpha=1)
-	
-	for k in valleys:
-		xp=[marker[0],(marker[0] + 3 * (ySlice1[k]-marker[0]))]
-		yp=[marker[1],(marker[1] + 3 * (xSlice1[k]-marker[1]))]
-		ax.plot(xp,yp, '--r')
-	
-	
-	ax.quiver(marker[0],marker[1],ySlice1[finalpeak] - marker[0],xSlice1[finalpeak] - marker[1],
-		linewidth=2,ec='g', angles='xy', scale=.5,scale_units='xy')
-	
-	ax.scatter(marker[0],marker[1],s=100, color='m',alpha=1)
-	
-	xlimit=ax.get_xlim()
-	ylimit=ax.get_ylim()
-	ax.text(np.mean(xlimit),ylimit[1]-5,'A', color='b',**text_options)
-	ax.text(np.mean(xlimit),ylimit[0]+5,'P', color='b',**text_options)
-	ax.text(xlimit[1]-5,np.mean(ylimit),'L', color='b',**text_options)
-	ax.text(xlimit[0]+5,np.mean(ylimit),'R',color='b', **text_options)
-	ax.set_title('Axial View', **subtitle_text_options)
-	
-	ax = fig.add_subplot(233)
-	ax.plot(np.arange(0, 360), valSlice1)
-	ax.plot(np.arange(0, 360), sprofil)
-	ax.set_xlim(0,361)
-	
-	ax.set_ylim(np.min([valSlice1, valSlice2])-50,
-			  np.max([valSlice1, valSlice2])+50)
-	
-	ax.scatter(angleSlice1[dangles.tolist()],valSlice1[dangles.tolist()],
-		s=120, edgecolors='g', color='none', alpha=1)
-	
-	ax.scatter(angleSlice1[angles.tolist()],valSlice1[angles.tolist()],
-			s=120, facecolors='g', edgecolors='g',alpha=1)
-	
-	ax.set_title('Intensity Profile', **subtitle_text_options)
-	
-	ax = fig.add_subplot(234)
-	ax.imshow(slice2, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
-	ax.set_xlim([segment[0]-30,segment[0]+30])
-	ax.set_ylim([segment[1]-30,segment[1]+30])
-	
-	ax.set_xticks([]),ax.set_yticks([])
-	ax.set_title('Directional Level', **subtitle_text_options)
-	ax.plot(ySlice2,xSlice2, ':r')
-	ax.scatter(ySlice2[dirValleys.astype(int).tolist()],xSlice2[dirValleys.astype(int).tolist()],
-			   s=80, color='r',alpha=1)
-	
-	for k in dirValleys:
-		xp=[segment[0],(segment[0] + 1.5 * (ySlice2[int(k)]-segment[0]))]
-		yp=[segment[1],(segment[1] + 1.5 * (xSlice2[int(k)]-segment[1]))]
-		ax.plot(xp, yp, '-r')
-	
-	xlimit=ax.get_xlim()
-	ylimit=ax.get_ylim()
-	ax.text(np.mean(xlimit),ylimit[1]-5,'A', color='b',**text_options)
-	ax.text(np.mean(xlimit),ylimit[0]+5,'P', color='b',**text_options)
-	ax.text(xlimit[1]-5,np.mean(ylimit),'L', color='b',**text_options)
-	ax.text(xlimit[0]+5,np.mean(ylimit),'R',color='b', **text_options)
-	ax.set_title('Directional Level', **subtitle_text_options)
-	
-	sol_tran=f"COM-Transversal Solution: {rolls_rad[cog_trans_solution]:.2f}"
-	sol_sag=f"COM-Sagittal Solution: {rolls_rad[cog_sag_solution]:.2f}"
-	sol_star=f"STARS Solution: {rolls_rad[darkstar_solution]:.2f}"
-	sol_asm=f"ASM Solution: {rolls_rad[asm_solution]:.2f}"
-	pol_ang=f"Polar Angle: {abs(polar1):.0f}"
-	resol=f"CT Resolution: {voxsize[0]:.2f}x{voxsize[1]:.2f}x{voxsize[2]:.2f} mm"
-	
-	ax.text(-.05, -.3,sol_tran, transform=ax.transAxes, **surround_text_options)
-	ax.text(-.05, -.4,sol_sag, transform=ax.transAxes, **surround_text_options)
-	ax.text(-.05, -.5,sol_star, transform=ax.transAxes, **surround_text_options)
-	ax.text(-.05, -.6,sol_asm, transform=ax.transAxes, **surround_text_options)
-	ax.text(-.05, -.7,pol_ang, transform=ax.transAxes, **surround_text_options)
-	ax.text(-.05, -.8,resol, transform=ax.transAxes, **surround_text_options)
-	
-	
-	ax = fig.add_subplot(235)
-	ax.plot(np.arange(0, 360), valSlice2)
-	ax.set_xlim(0,361)
-	
-	ax.set_ylim(np.min([valSlice1, valSlice2])-50,
-			  np.max([valSlice1, valSlice2])+50)
-	
-	ax = fig.add_subplot(236)
-	ax.plot(np.rad2deg(rollangleSolutions[realsolution]),
-			solution[side]['sumintensitynew_final'][solution[side]['realsolution']])
-	ax.set_yticks([])
-	ax.plot(np.rad2deg(solution[side]['rollangles_final'][int(not(solution[side]['realsolution']))]),
-			solution[side]['sumintensitynew_final'][int(not(solution[side]['realsolution']))],
-			color='r',alpha=1)
-	
-	sub_str=f"{os.path.basename(imgFp).split('_')[0]}"
-	
-	plt.suptitle(sub_str, fontsize=20, fontweight='bold')
-	
-	fig.subplots_adjust(hspace=.3, bottom=0.25)
