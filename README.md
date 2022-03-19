@@ -98,11 +98,11 @@ To get a local copy up and running follow these simple steps.
 
 2. Run the following to execute the epoch script:
     ```sh
-    DiODE_python diode_auto.py -i "full/path/to/nifti_file" -e 'electrode_name' -rh -14.95,24.64,52.19 -rt -21.24,8.84,72.19 -lh 5.43,25.12,52.28 -lt 15.08,12.11,71.03
+    DiODE_python main.py -i "full/path/to/nifti_file" -e 'electrode_name' -rh -14.95,24.64,52.19 -rt -21.24,8.84,72.19 -lh 5.43,25.12,52.28 -lt 15.08,12.11,71.03
     ```
     or
     ```sh
-    DiODE_python diode_auto.py -i "full/path/to/nifti_file" -e 'electrode_name' -fcsv 'full/path/to/fcsv_coords'
+    DiODE_python main.py -i "full/path/to/nifti_file" -e 'electrode_name' -fcsv 'full/path/to/fcsv_coords'
     ```
 
   * **-i:** full directory path to the postoperative CT scan with electrodes (in `nii.gz`)
@@ -123,7 +123,7 @@ The repository has the following scheme:
    ├── *nii.gz                 # sample CT images containing B.Sci directional electrodes
 |   ├── *fcsv                   # associated RAS coordinates for the head/tail of each electrode
 |   └── imgs                    # default output colder for generated figures
-├── DiODe.py                    # potentially cleaned-up version
+├── main.py                    # potentially cleaned-up version
 ├── diode_auto.py               # first pass conversion from Matlab (less efficient but still runs)
 ├── read_fcsv.m                 # Matlab function to read fcsv files, could be used in the Matlab implementation
 ├── diode_elspec.py             # electrode specification `.py` that writes the JSON file (can use this to add additional electrodes)
