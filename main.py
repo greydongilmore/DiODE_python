@@ -1,9 +1,18 @@
 import numpy as np
 import math
+import re
 import nibabel as nib
 from scipy import interpolate
 from scipy.ndimage.interpolation import map_coordinates
 import matplotlib.pyplot as plt
+import pandas as pd
+import csv
+from skimage import measure
+from sklearn.linear_model import LinearRegression
+
+
+from diode_elspec import electrodeModels
+
 
 def ea_sample_slice(vol, tracor, wsize, voxmm, coords, el, interp_order=2):
 	"""
@@ -45,7 +54,7 @@ def ea_sample_slice(vol, tracor, wsize, voxmm, coords, el, interp_order=2):
 				np.tile(coords[2],(1, len(boundbox[0])))[0]
 			])
 		# need to flip x and y here
-		yi, xi= np.meshgrid(boundbox[0],boundbox[1])
+		xi, yi= np.meshgrid(boundbox[0],boundbox[1])
 		zi = np.tile(boundbox[2][0], (xi.shape))
 		sampleheight=(vol.affine @ np.array([1,1, boundbox[2][0],1]))[2]
 	elif tracor == 'cor':
@@ -89,6 +98,7 @@ def ea_sample_slice(vol, tracor, wsize, voxmm, coords, el, interp_order=2):
 	ima = np.empty(xi.shape, dtype=float)
 	map_coordinates(vol.get_fdata(), (yi,xi,zi), order=interp_order, output=ima)
 	slice_=ima.reshape(orig_shape)
+	
 	
 	return slice_,boundbox,sampleheight
 
@@ -182,9 +192,12 @@ def darkstar(roll,pitch,yaw,dirlevel,radius):
 
 def ea_diode_intensitypeaksFFT(intensity, noPeaks):
 	"""
-	this function detects 'noPeaks' number of intensity peaks. peaks are constrained to be at 360�/noPeaks angles to each other.
-	Function runs a noPeaks * (360�/noPeaks) array over the intensity-profile and finds the angle at which the sum of all peaks is highest.
+	This function detects 'noPeaks' number of intensity peaks. peaks are 
+	constrained to be at 360�/noPeaks angles to each other.
+	Function runs a noPeaks * (360/noPeaks) array over the intensity-profile 
+	and finds the angle at which the sum of all peaks is highest.
 	"""
+	
 	fftint = np.fft.fft(intensity)
 	fftpart = fftint[noPeaks+1]
 	amplitude = abs(fftpart)
@@ -307,7 +320,7 @@ def calculateCOG(ct_obj,xvec_mm,yvec_mm,marker_mm, unitvector_mm, orientation='t
 		Yslice = (np.arange(-extract_width,extract_width+samplingres,samplingres)* xvec_mm[1]) + \
 			(np.arange(-extract_width,extract_width+samplingres,samplingres) * yvec_mm[1]).reshape(-1,1) + marker_mm[1]
 		
-		Zslice = ea_diode_perpendicularplane(unitvector_mm, marker_mm, Xslice, Yslice)
+		Zslice = perpendicularplane(unitvector_mm, marker_mm, Xslice, Yslice)
 	
 	orig_shape=Xslice.shape
 	for arr in (Xslice,Yslice,Zslice, Xmm, Ymm, Zmm):
@@ -339,14 +352,65 @@ def calculateCOG(ct_obj,xvec_mm,yvec_mm,marker_mm, unitvector_mm, orientation='t
 	
 	return solution
 
+
+def lightmarker(roll,pitch,yaw,marker):
+	marker = marker[:3].reshape(-1, 1)
+	
+	ven = np.c_[0,0.65,-0.75].T
+	dor = np.c_[0,0.65,0.75].T
+	
+	M,_,_,_ = rollpitchyaw(roll-(np.pi/2),pitch,yaw)
+	ven90 = M.dot(ven)
+	dor90 = M.dot(dor)
+	
+	M,_,_,_ = rollpitchyaw(roll-(3*(np.pi/2)),pitch,yaw)
+	ven270 = M.dot(ven)
+	dor270 = M.dot(dor)
+	
+	# calculate intersecting points between vec60/270/300 and the z-plane through the dir-level artifact
+	
+	# unitvector from ven0 to dor0
+	vec90 = (dor90-ven90) / np.linalg.norm(dor90-ven90)
+	# ventral point at 0� from the directional level
+	dir_ven90 = marker + ven90
+	# dorsal point at 0� from the directional level
+	dir_dor90 = marker + dor90
+	# factor x of how many unitvectors dir_ven0 is distanced from the marker in the z-dimension
+	dir_x90 = (marker[2] - dir_ven90[2]) / vec90[2]
+	# intersecting point of the line from ven0 to dor0 withe the marker plane in the z-dimension
+	dir_90 = dir_ven90 + (dir_x90 * vec90)
+	
+	vec270 = (dor270-ven270) / np.linalg.norm(dor270-ven270)
+	dir_ven270 = marker + ven270
+	dir_dor270 = marker + dor270
+	dir_x270 = (marker[2] - dir_ven270[2]) / vec270[2]
+	dir_270 = dir_ven270 + (dir_x270 * vec270)
+	
+	# create vectors corresponding to the dark lines of the artiface
+	dir_vec1 = (dir_90 - dir_270) / np.linalg.norm(dir_90 - dir_270)
+	
+	# calculate the angles of the dark lines with respect to the y-axis
+	dir_angles = math.atan2(np.linalg.norm(np.cross(dir_vec1.T,np.r_[0,1,0])[0]),np.dot(dir_vec1.T, np.r_[0,1,0]))
+	if dir_vec1[0] < 0:
+		dir_angles = -dir_angles
+	
+	dir_angles = np.c_[dir_angles, dir_angles + np.pi]
+	dir_angles[dir_angles>2*np.pi] = dir_angles[dir_angles>2*np.pi] - (2* np.pi)
+	dir_angles[dir_angles<0] = dir_angles[dir_angles<0] + (2* np.pi)
+	dir_angles = (2 *np.pi) - dir_angles
+	dir_angles = sorted(dir_angles)[0]
+	
+	return dir_angles
+
+
 def calculateASM(slice_vol, center, voxsize, valley, peak):
 	nDegree = 360
 	ASMintensity_raw=[]
 	ASMradii = [3,6,9]
 	for iradius in ASMradii:
 		#f = interpolate.interp2d(np.arange(dims[0]), np.arange(dims[1]), slice1, kind='linear')
-		valSlice=np.zeros(360)
-		for theta in range(360):
+		valSlice=np.zeros(nDegree)
+		for theta in range(nDegree):
 			x = iradius / voxsize[1] * math.sin(math.radians(theta)) + center[1]
 			y = iradius / voxsize[0] * math.cos(math.radians(theta)) + center[0]
 			valSlice[theta] = slice_vol[int(x), int(y)]
@@ -397,20 +461,21 @@ def rollpitchyaw(roll,pitch,yaw):
 
 def rotation_matrix(pitch, roll, yaw):
 	"""Creates rotation matrix from Euler angles.
-
+	
 	Parameters
 	----------
-	P1: ndarray
-		Starting point coordinates.
-
-	P2 : ndarray
-		Ending point coordinates.
+	pitch: int
+		rotation about y-axis.
+	roll: int
+		rotation about x-axis.
+	yaw: int
+		rotation about z-axis.
 	
 	Returns
 	-------
-	NormVec : ndarray
-		The normal vector of the vector.
-
+	M: ndarray
+		a 3x3 rotation matrix with rotations applied to given angles.
+	
 	"""
 	pitch, roll, yaw = np.array([pitch, roll, yaw])
 	matrix_pitch = np.array([
@@ -447,37 +512,112 @@ def leastSquares(A, y):
 	sol = np.linalg.lstsq(A,y,rcond=None)[0].T
 	return sol
 
+def determineFCSVCoordSystem(input_fcsv):
+	# need to determine if file is in RAS or LPS
+	# loop through header to find coordinate system
+	coordFlag = re.compile("# CoordinateSystem")
+	coord_sys = None
+	with open(input_fcsv, "r+") as fid:
+		rdr = csv.DictReader(filter(lambda row: row[0] == "#", fid))
+		row_cnt = 0
+		for row in rdr:
+			cleaned_dict = {k: v for k, v in row.items() if k is not None}
+			if any(coordFlag.match(x) for x in list(cleaned_dict.values())):
+				coordString = list(filter(coordFlag.match, list(cleaned_dict.values())))
+				assert len(coordString) == 1
+				coord_sys = coordString[0].split("=")[-1].strip()
+			row_cnt += 1
+	return coord_sys
 
-subtitle_text_options={
-	'fontsize': 16, 
-	'fontweight': 'bold'
-	}
+def pixLookup(slice_,y,x,zpad, RGB=3):
+	"""
+	This helper function looks up a pixel value from a given input image
+	img is the input image (RGB or Grayscale)
+	yx is the coordinate and repEdge tells the condition for pixel values out
+	side of img (Use round up convention)
+	"""
+	pixVal=np.zeros((1,1,RGB))
+	
+	if RGB==3:
+		ROW,COL,_=slice_.shape
+	else:
+		ROW,COL=slice_.shape
+	
+	# If the pixel value is outside of image given
+	if np.any([(x<=0), (x>COL), (y<=0), (y>ROW)]):
+		if zpad:
+			pixVal=0
+		else:
+			y0=y
+			x0=x
+			y0[y0<1]=1
+			x0[x0<1]=1
+			y0[y0>ROW]=ROW
+			x0[x0>COL]=COL
+			# Bug fix suggested by Sanjuro
+			pixVal=slice_[np.ceil(y0),np.ceil(x0),:]
+	else:
+		if RGB==3:
+			pixVal=slice_[int(np.ceil(y)),int(np.ceil(x)),:]
+		else:
+			pixVal=slice_[int(np.ceil(y)),int(np.ceil(x))]
+	
+	return pixVal
 
-text_options = {'horizontalalignment': 'center',
-				'verticalalignment': 'center',
-				'fontsize': 18,
-				'fontweight': 'bold'}
+def ea_diode_interpimage(slice_,yx,zpad=True, RGB=False):
+	
+	if RGB == 0:
+		RGB=np.ndim(slice_)
+	
+	yx0=np.floor(yx)
+	wt=yx-yx0
+	wtConj=1-wt
+	interTop=wtConj[1]*pixLookup(slice_,yx0[0],yx0[1],zpad,RGB) + wt[1]* pixLookup(slice_,yx0[0],yx0[1],zpad,RGB)
+	interBtm=wtConj[1]* pixLookup(slice_,yx[0],yx[1],zpad,RGB) + wt[1]* pixLookup(slice_,yx[0],yx[1],zpad,RGB)
+	interVal=wtConj[0]*interTop + wt[0]* interBtm
 
-surround_text_options={
-	'fontsize': 14, 
-	'fontweight': 'bold'
-	}
+	return interVal
+
+def intensityprofile(slice_,center,voxsize,radius):
+	radius = radius * 2
+	vector = np.c_[0,1] * (radius / voxsize[0])
+	vectornew = []
+	angle = []
+	intensity = []
+	for k in range(360):
+		theta = (2*np.pi/360) * (k)
+		rotmat = np.r_[np.c_[math.cos(theta),math.sin(theta)], np.c_[-math.sin(theta),math.cos(theta)]]
+		vectornew.append((vector @ rotmat)[0] + center)
+		angle.append(theta)
+		intensity.append(ea_diode_interpimage(slice_, vectornew[-1][::-1]))
+	
+	vectornew=np.stack(vectornew)
+	return angle, np.array(intensity)[::-1],vectornew
+
 
 #%%
 
-imgFp=ctpath
-marker=np.round(marker_vx[:3],0)
-segment=np.round(dirlevel2_vx[:3],0)
 
 def main(args):
 	# Input arguments:
 	# (1) imgFp: string. the file name of the input Post-CT image
 	# (2) marker: list. The position of marker. Example: [243, 297, 107]
 	# (3) segment: list. The position of the proximal segments. Example: [248, 299, 100]
-
+	
 	marker_dict = {}
 	if args.fcsv is not None:
-		marker_dict = read_fcsv(args.fcsv)
+		fcsv_df = pd.read_table(args.fcsv, sep=",", header=2)
+		coordSys = determineFCSVCoordSystem(args.fcsv)
+		
+		if any(x in coordSys for x in {"LPS", "1"}):
+			fcsv_df["x"] = -1 * fcsv_df["x"]  # flip orientation in x
+			fcsv_df["y"] = -1 * fcsv_df["y"]  # flip orientation in y
+		
+		for iside in fcsv_df['desc'].unique():
+			marker_dict[iside] = {
+				'head': fcsv_df[(fcsv_df['desc']==iside) & (fcsv_df['label']=='head')][["x", "y", "z"]].to_numpy()[0],
+				'tail': fcsv_df[(fcsv_df['desc']==iside) & (fcsv_df['label']=='tail')][["x", "y", "z"]].to_numpy()[0]
+			}
 	else:
 		if all(x is not None for x in (args.lh,args.lt)):
 			marker_dict['left']={
@@ -489,105 +629,175 @@ def main(args):
 				'head': args.rh,
 				'tail': args.rt,
 			}
-
+	
+	radius1 = 4  # radius for analysis at marker (default 3 mm)
+	radius2 = 8  # radius for analysis at proximal segments (default 8 mm)
+	extractradius = 30
+	noPeaks= 2
+	
+	img = nib.load(args.input_ct)
+	V = img.get_fdata()
+	header_info = img.header
+	dims = header_info['dim'][1:4]
+	voxsize = header_info['pixdim'][1:4]
+	assert voxsize[0] == voxsize[1], "The X and Y axis should have the same voxsize"
+	
+	elspec = electrodeModels[elmodel]
+	
 	for iside in list(marker_dict):
-		marker = np.asarray(iside['head']).astype(int)
+		head_mm_initial = np.asarray(marker_dict[iside]['head']).astype(int)
+		tail_mm_initial = np.asarray(marker_dict[iside]['tail']).astype(int)
+		unitvector_mm_initial = (tail_mm_initial - head_mm_initial)/np.linalg.norm(tail_mm_initial - head_mm_initial)
+		
+		level1centerRelative = elspec['contact_length'] + elspec['contact_spacing']
+		level2centerRelative = (elspec['contact_length'] + elspec['contact_spacing']) * 2
+		markercenterRelative = elspec['markerpos'] - (elspec['tip_length']* int(not(elspec['tipiscontact']))) - elspec['contact_length']/2
+		
+		samplelength = 20
+		samplingvector_mm = np.vstack([
+			np.linspace(head_mm_initial[0], (head_mm_initial[0] + (samplelength*unitvector_mm_initial[0])), samplelength*(2)),
+			np.linspace(head_mm_initial[1], (head_mm_initial[1] + (samplelength*unitvector_mm_initial[1])), samplelength*(2)),
+			np.linspace(head_mm_initial[2], (head_mm_initial[2] + (samplelength*unitvector_mm_initial[2])), samplelength*(2)),
+			np.ones(samplelength*(2))
+		])
+		
+		samplingvector_vx = np.round(leastSquares(img.affine, samplingvector_mm),0).T
+		
+		newcentervector_vx=[]
+		for k in range(samplingvector_vx.shape[1]):
+			tmp, bb, sh = ea_sample_slice(img, 'tra', extractradius, 'vox', samplingvector_vx[:3, k],1,1)
+			tmp_label = tmp > 2000
+			
+			# find connected components remaining
+			tmpcent = measure.regionprops(tmp_label.astype(int), tmp)
+			centroids = np.array([prop.centroid for prop in tmpcent])
+			if len(tmpcent) == 1:
+				tmpcent = [int(x) for x in np.round(centroids, 0)[0]]
+				newcentervector_vx.append([bb[0][tmpcent[0]],bb[1][tmpcent[1]], samplingvector_vx[2,k],1])
+			elif len(tmpcent) > 1:
+				tmpind = np.argmin(np.sum(abs(np.vstack(centroids) - np.c_[(tmp_label.shape[0])/2, (tmp_label.shape[0])/2]),1))
+				centroids = tmpcent[tmpind].centroid
+				tmpcent = [int(x) for x in np.round(centroids,0)]
+				newcentervector_vx.append([bb[0][tmpcent[0]],bb[1][tmpcent[1]], samplingvector_vx[2,k],1])
+			elif len(tmpcent) == 0:
+				newcentervector_vx.append([np.nan]*4)
+			
+			print(f"Done sample {k+1} of {samplingvector_vx.shape[1]}: {newcentervector_vx[-1][:3]}")
+		
+		newcentervector_mm = img.affine @ np.stack([x for x in newcentervector_vx if not all(np.isnan(x))]).T
+		#newcentervector_mm = samplingvector_mm
+		
+		# fit linear model to the centers of mass and recalculate head and unitvector
+		new = np.arange(0,newcentervector_mm.shape[1]/2,.5)
+		
+		lmx = LinearRegression()
+		xmdl = lmx.fit(new.reshape(-1, 1),newcentervector_mm[0,:])
+		
+		lmy = LinearRegression()
+		ymdl = lmy.fit(new.reshape(-1, 1),newcentervector_mm[1,:])
+		
+		lmz = LinearRegression()
+		zmdl = lmz.fit(new.reshape(-1, 1),newcentervector_mm[2,:])
+		
+		head_mm = np.array([xmdl.predict(np.array(0).reshape(1,-1))[0],
+				ymdl.predict(np.array(0).reshape(1,-1))[0],
+				zmdl.predict(np.array(0).reshape(1,-1))[0],1])
+		
+		other_mm = np.array([xmdl.predict(np.array(10).reshape(1,-1))[0],
+				ymdl.predict(np.array(10).reshape(1,-1))[0],
+				zmdl.predict(np.array(10).reshape(1,-1))[0],1])
+		
+		unitvector_mm = (other_mm - head_mm)/np.linalg.norm(other_mm - head_mm)
+		
+		# calculate locations of markers and directional levels
+		tail_mm = head_mm + (6 * unitvector_mm)
+		marker_mm = head_mm + (markercenterRelative * unitvector_mm)
+		dirlevel1_mm = head_mm + (level1centerRelative * unitvector_mm)
+		dirlevel2_mm = head_mm + (level2centerRelative * unitvector_mm)
+		
+		# transform to vx
+		marker_vx = np.round(leastSquares(img.affine, marker_mm),0)
+		dirlevel1_vx = np.round(leastSquares(img.affine, dirlevel1_mm),0)
+		dirlevel2_vx = np.round(leastSquares(img.affine, dirlevel2_mm),0)
+		
+		dirlevelnew_mm = np.mean(np.c_[dirlevel1_mm, dirlevel2_mm],1)
+		dirlevelnew_vx = np.round(leastSquares(img.affine, dirlevelnew_mm),0)
+		
 		segment = np.asarray(iside['tail']).astype(int)
 		
-		unitvector_mm = (marker - segment)/np.linalg.norm(marker - segment)
-		polar_angle = math.degrees(math.acos(np.dot(unitvector_mm, [0, 0, 1])))
+		yaw = math.asin(unitvector_mm[0])
+		pitch = math.asin(unitvector_mm[1]/math.cos(yaw))
+		polar1 = math.degrees(math.acos(np.dot(unitvector_mm, [0, 0, 1,0])))
+		polar2 = -np.rad2deg(math.atan2(unitvector_mm[1],unitvector_mm[0]))+ 90
 		
-	# 	assert abs(polar_angle) < 50, f"The angle between the lead and the slice " \
-	# 								  f"normal is {polar_angle} degrees.\nNote that angles " \
-	# 								  f"> 50 degrees could cause inaccurate orientation estimation."
-		img = nib.load(args.input_ct)
-		V = img.get_fdata()
-		header_info = img.header
-		dims = header_info['dim'][1:4]
-		voxsize = header_info['pixdim'][1:4]
-		assert voxsize[0] == voxsize[1], "The X and Y axis should have the same voxsize"
-
-		radius1 = 4  # radius for analysis at marker (default 3 mm)
-		radius2 = 8  # radius for analysis at proximal segments (default 8 mm)
-		extractradius = 30
-		noPeaks= 2
+		assert abs(polar1) < 50, f"The angle between the lead and the slice " \
+									  f"normal is {polar_angle} degrees.\nNote that angles " \
+									  f"> 50 degrees could cause inaccurate orientation estimation."
 		
-		# Initial orientation estimation at marker position
-		xi, yi= np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
-		zi = marker[2] * np.ones_like(xi)
-		orig_shape=xi.shape
-		for arr in (xi,yi,zi):
-			arr.shape=-1
+		fftdiff = []
+		checkslices = np.linspace(1,-1,5) # check neighboring slices for marker +/- 1mm in .5mm steps
+		for k in checkslices:
+			checklocation_mm = marker_mm + (unitvector_mm * k)
+			checklocation_vx = np.round(leastSquares(img.affine, checklocation_mm),0)
+			slice_=ea_sample_slice(img,'tra',extractradius,'vox',(checklocation_vx[:3] + np.c_[0,0,k])[0], 1,1)[0]
+			
+			center = np.c_[(slice_.shape[0])/2,(slice_.shape[0])/2][0]
+			
+			# calculate intensityprofile and its FFT for each slice
+			radius = 4
+			_, intensity,_ = intensityprofile(slice_, center,voxsize,radius)
+			peak,tmpfft = ea_diode_intensitypeaksFFT(intensity,2)
+			valley,_ = ea_diode_intensitypeaksFFT(-intensity,2)
+			fftdiff.append(np.mean(tmpfft[peak]) - np.mean(tmpfft[valley]))
+			
+			print(f"Done checking slice {k} for marker")
 		
-		ima = np.empty(xi.shape, dtype=float)
-		map_coordinates(img.get_fdata(), (xi,yi,zi), order=2, output=ima)
-		slice1=ima.reshape(orig_shape)
+		# select slice with maximum difference in fft and respecify
+		# marker accordingly
+		tmp_shift = checkslices[np.argmax(fftdiff)]
+		marker_mm = marker_mm + (unitvector_mm * tmp_shift)
+		marker_vx = np.round(leastSquares(img.affine, marker_mm),0)
 		
 		print("Extract intensity profile from marker artifact")
-		nDegree = 360
-		xSlice1 = np.zeros(nDegree)
-		ySlice1 = np.zeros(nDegree)
-		angleSlice1 = np.zeros(nDegree)
-		valSlice1 = np.zeros(nDegree)
-		#f = interpolate.interp2d(np.arange(dims[0]), np.arange(dims[1]), slice1, kind='linear')
-		for theta in range(360):
-			xSlice1[theta] = radius1 / voxsize[0] * math.sin(math.radians(theta)) + marker[1]
-			ySlice1[theta] = radius1 / voxsize[0] * math.cos(math.radians(theta)) + marker[0]
-			angleSlice1[theta] = theta
-			valSlice1[theta] = slice1[int(xSlice1[theta]), int(ySlice1[theta])]
+		# extract marker artifact from slice
+		slice1= ea_sample_slice(img,'tra', extractradius,'vox', marker_vx[:3], 1, 1)[0]
 		
+		center_marker = np.c_[(slice1.shape[0])/2, (slice1.shape[0])/2][0]
 		
-		dangles,angles,sprofil = peak_FFT(valSlice1)
-		dvalleys,valleys,_ = peak_FFT(-valSlice1)
+		# extract intensity profile from marker artifact
+		radius = 3
+		angles, intensity, vector = intensityprofile(slice1, center_marker,voxsize,radius)
 		
-		print("Extract intensity profile from segments artifact")
-
-		xi, yi= np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
-		zi = segment[2] * np.ones_like(xi)
-		orig_shape=xi.shape
-		for arr in (xi,yi,zi):
-			arr.shape=-1
+		# detect peaks and valleys for marker artifact
+		peak, markerfft = ea_diode_intensitypeaksFFT(intensity, 2)
+		valley,_ = ea_diode_intensitypeaksFFT(-intensity, 2)
 		
-		ima = np.empty(xi.shape, dtype=float)
-		map_coordinates(img.get_fdata(), (xi,yi,zi), order=2, output=ima)
-		slice2=ima.reshape(orig_shape)
-		valSlice2 = np.zeros(nDegree)
-		xSlice2 = np.zeros(nDegree)
-		ySlice2 = np.zeros(nDegree)
-		for theta in range(360):
-			xSlice2[theta] = radius2 / voxsize[1] * math.sin(math.radians(theta)) + segment[1]
-			ySlice2[theta] = radius2 / voxsize[0] * math.cos(math.radians(theta)) + segment[0]
-			valSlice2[theta] = slice2[int(xSlice2[theta]), int(ySlice2[theta])]
+		ASMradii = [3,6,9]
+		ASMintensity_raw=[]
+		for k in ASMradii:
+			_, ASMintensity_tmp,_ = intensityprofile(slice1, center_marker ,voxsize, k)
+			ASMintensity_raw.append(ASMintensity_tmp.T)
 		
+		ASMintensity = np.mean(np.stack(ASMintensity_raw), 0)
+		if max(ASMintensity[valley[0]:valley[1]]) > max(ASMintensity[list(range(valley[0]))+list(range(valley[1],len(ASMintensity)))]):
+			if peak[0] > valley[0] and peak[0] < valley[0]:
+				print('ASM decides for peak 1')
+				asm_solution = 0
+			else:
+				print('ASM decides for peak 2')
+				asm_solution = 1
+		else:
+			if peak[0] > valley[0] and peak[0] < valley[1]:
+				print('ASM decides for peak 2')
+				asm_solution = 1
+			else:
+				print('ASM decides for peak 1')
+				asm_solution = 0
 		
-		corrections = np.arange(-30, 31)
-		nDegreeSeg = corrections.shape[0]
-		valSlice2Sim = np.zeros(nDegreeSeg)
-		init_angle = angles[1] + 90
-		init_angles = np.linspace(init_angle + corrections[0], init_angle + corrections[-1], nDegreeSeg)
-		intervals = [60, 120, 180, 240, 300, 360]
-		f2 = interpolate.interp2d(np.arange(dims[0]), np.arange(dims[1]), slice2, kind='linear')
-		for i in range(nDegreeSeg):
-			marker_angle = init_angles[i]
-			xStar=np.zeros(6)
-			yStar=np.zeros(6)
-			for j in range(6):
-				xStar[j] = radius2 * math.sin(math.radians(marker_angle + intervals[j])) + segment[1]
-				yStar[j] = radius2 * math.cos(math.radians(marker_angle + intervals[j])) + segment[0]
-				valSlice2Sim[i] += f2(xStar[j], yStar[j] )
-		
-		valSlice2Sim /= 6
-		final_correction = corrections[np.argmin(valSlice2Sim)]
-		observed_angles = angles + final_correction - 90
-		gamma = math.radians(observed_angles[0])
-		
-		print(f"Corrected peak angle (in degrees): {final_correction}")
-		print(f"Observed roll angles at the axial plane (in degrees): {observed_angles[0]}, {observed_angles[1]}")
-
 		beta = math.asin(unitvector_mm[0])  # yaw
 		alpha = math.asin(unitvector_mm[1] / math.cos(beta))  # pitch
-		rolltmp=angle2roll(angles[0], beta, alpha)
-		polar1=np.rad2deg(math.atan2(np.linalg.norm(np.cross(np.r_[0,0,1],unitvector_mm[:3])),
+		rolltmp = angle2roll(angles[peak[0]], beta, alpha)
+		polar1 = np.rad2deg(math.atan2(np.linalg.norm(np.cross(np.r_[0,0,1],unitvector_mm[:3])),
 						   np.dot(np.r_[0,0,1],unitvector_mm[:3])))
 		polar2=-np.rad2deg(math.atan2(unitvector_mm[1],unitvector_mm[0]))+ 90
 		
@@ -595,9 +805,8 @@ def main(args):
 		yvec_mm = M.dot(np.r_[0,1,0])
 		xvec_mm = np.cross(unitvector_mm[:3], yvec_mm)
 		
-		marker_mm=np.round(img.affine.dot(np.append(marker.T,1)),0)
+		marker_mm=np.round(img.affine.dot(marker_vx.T),0)
 		
-		asm_solution = calculateASM(slice1, marker, voxsize, valleys,angles)
 		
 		cog_trans_solution = calculateCOG(img, xvec_mm, yvec_mm, marker_mm, unitvector_mm,'trans',1)
 		
@@ -607,71 +816,157 @@ def main(args):
 		
 		finalpeak = angles[realsolution]
 		
-		rollangleSolutions=[]
-		sumintensitySolutions = []
+		# darkstar method
+		checkslices = np.linspace(-2,2,9)
 		
-		sumintensitynew=np.zeros(60)
-		rolls_rad={}
-		rolls_rad[0] = angle2roll(angles[0],beta,alpha)
-		rollangles=np.zeros(60)
-		for k in range(60):
-			roll_shift = k-30
-			rollangles[k] = rolls_rad[0] + np.deg2rad(roll_shift)
-			dirnew_angles = darkstar(rollangles[k],alpha,beta,segment,radius2)
-			sumintensitynew[k]=intensitypeaksdirmarker(valSlice2,dirnew_angles)
+		sumintensitynew_final={}
+		rollangles_final={}
 		
-		sumintensitySolutions.append(sumintensitynew)
-		rollangleSolutions.append(rollangles[np.argmin(sumintensitySolutions[0])])
+		# solution 1
+		sumintensitynew=[]
+		rollangles=[]
+		myroll = angle2roll(angles[peak[0]],yaw,pitch)
+		for x in checkslices:
+			checklocation_mm = dirlevelnew_mm + (unitvector_mm * x)
+			checklocation_vx = np.round(np.linalg.lstsq(img.affine, checklocation_mm, rcond=None)[0],0)
+			artifact_tmp=ea_sample_slice(img,'tra',extractradius,'vox',checklocation_vx[:3],1,1)[0]
+			
+			center_tmp = np.c_[(artifact_tmp.shape[0])/2, (artifact_tmp.shape[0])/2][0]
+			radius = 8
+			
+			angle, intensity_tmp,vector = intensityprofile(artifact_tmp,center_tmp,voxsize,radius)
+			
+			# determine angles of the 6-valley artifact ('dark star') artifact in each of the slices for +30:-30 deg
+			sumintensitynew_tmp=[]
+			rollangles_tmp=[]
+			for k in range(60):
+				roll_shift = k-30
+				rolltemp = myroll + np.deg2rad(roll_shift)
+				dirnew_angles = darkstar(rolltemp,pitch,yaw,checklocation_mm,radius)
+				sumintensitynew_tmp.append(intensitypeaksdirmarker(intensity_tmp,dirnew_angles))
+				rollangles_tmp.append(np.deg2rad(roll_shift))
+			sumintensitynew.append(sumintensitynew_tmp)
+			rollangles.append(rollangles_tmp)
 		
-		sumintensitynew=np.zeros(60)
-		rolls_rad[1] = angle2roll(angles[1],beta,alpha)
-		rollangles=np.zeros(60)
-		for k in range(60):
-			roll_shift = k-30
-			rollangles[k] = rolls_rad[1] + np.deg2rad(roll_shift)
-			dirnew_angles = darkstar(rollangles[k],alpha,beta,segment,radius2)
-			sumintensitynew[k]=intensitypeaksdirmarker(valSlice2,dirnew_angles)
+		sumintensitynew_final[0]=np.stack([np.array(x) for x in sumintensitynew])
+		rollangles_final[0]=np.stack([np.array(x) for x in rollangles])
 		
-		sumintensitySolutions.append(sumintensitynew)
-		rollangleSolutions.append(rollangles[np.argmin(sumintensitySolutions[1])])
+		darkstarangle=[]
+		darkstarslice=[]
+		darkstarangle.extend([np.argmin(np.min(sumintensitynew_final[0],0))])
+		darkstarslice.extend([np.argmin(np.min(sumintensitynew_final[0],1))])
 		
-		if min(sumintensitySolutions[0]) < min(sumintensitySolutions[1]):
+		
+		# solution 2
+		sumintensitynew=[]
+		rollangles=[]
+		myroll =angle2roll(angle[peak[1]],yaw,pitch)
+		for x in checkslices:
+			checklocation_mm = dirlevelnew_mm + (unitvector_mm * x)
+			checklocation_vx = np.round(leastSquares(img.affine, checklocation_mm),0)
+			artifact_tmp = ea_sample_slice(img,'tra',extractradius,'vox',checklocation_vx[:3],1,1)[0]
+			
+			center_tmp = np.c_[(artifact_tmp.shape[0])/2, (artifact_tmp.shape[0])/2][0]
+			radius = 8
+			
+			angle, intensity_tmp,vector = intensityprofile(artifact_tmp,center_tmp,voxsize,radius)
+			
+			# determine angles of the 6-valley artifact ('dark star') artifact in each of the slices for +30:-30 deg
+			sumintensitynew_tmp=[]
+			rollangles_tmp=[]
+			for k in range(60):
+				roll_shift = k-30
+				rolltemp = myroll + np.deg2rad(roll_shift)
+				dirnew_angles = darkstar(rolltemp,pitch,yaw,checklocation_mm,radius)
+				sumintensitynew_tmp.append(intensitypeaksdirmarker(intensity_tmp,dirnew_angles))
+				rollangles_tmp.append(np.deg2rad(roll_shift))
+			sumintensitynew.append(sumintensitynew_tmp)
+			rollangles.append(rollangles_tmp)
+		
+		sumintensitynew_final[1]=np.stack([np.array(x) for x in sumintensitynew])
+		rollangles_final[1]=np.stack([np.array(x) for x in rollangles])
+		
+		darkstarangle.extend([np.argmin(np.min(sumintensitynew_final[1],0))])
+		darkstarslice.extend([np.argmin(np.min(sumintensitynew_final[1],1))])
+		
+		for k in range(2):
+			sumintensitynew_final[k] = sumintensitynew_final[k][darkstarslice[k],:]
+			rollangles_final[k] = rollangles_final[k][darkstarslice[k],:]
+		
+		if min(sumintensitynew[0]) < min(sumintensitynew[1]):
 			print('Darkstar decides for peak 1')
 			darkstar_solution = 0
 		else:
 			print('Darkstar decides for peak 2')
 			darkstar_solution = 1
 		
+		finalpeak={}
+		peakangle={}
 		
-		dirnew_angles = darkstar(rollangles[np.argmin(sumintensitynew)],alpha,beta,segment,radius2)
-		dirValleys = np.round(np.rad2deg(dirnew_angles), 0)
-		dirValleys[dirValleys > 359] = dirValleys[dirValleys > 359] - 360
+		# Take COGtrans solution
+		finalpeak = peak[cog_trans_solution]
 		
-		gamma = math.atan((math.sin(gamma) * math.cos(alpha)) / \
-						  (math.cos(gamma) * math.cos(beta) - math.sin(alpha) * math.sin(beta) * math.sin(gamma)))
+		peakangle = angles[finalpeak]
+		roll = angle2roll(peakangle,yaw,pitch)
 		
-		print(f"Pitch, yaw, roll angles (in degrees): {math.degrees(alpha)}, {math.degrees(beta)}, {math.degrees(gamma)}")
-
-		marker_orientation = [-math.sin(gamma) * math.cos(beta),
-							  math.cos(gamma) * math.cos(alpha) + math.sin(alpha) * math.sin(beta) * math.sin(gamma),
-							  -math.cos(gamma) * math.sin(alpha) + math.sin(gamma) * math.sin(beta) * math.cos(alpha)]
+		realsolution = cog_trans_solution
 		
-		print("Estimated marker orientation")
-		print(f"Isotropic: [{marker_orientation[0]}, {marker_orientation[1]}, {marker_orientation[2]}]")
-
-		marker_orientation /= voxsize
-		marker_orientation = marker_orientation / np.linalg.norm(marker_orientation)
-		print(f"With current spacing: [{marker_orientation[0]}, {marker_orientation[1]}, {marker_orientation[2]}]")
-				
+		dirlevelnew_mm = dirlevelnew_mm + (unitvector_mm * checkslices[darkstarslice[realsolution]])
+		dirlevelnew_vx = np.round(leastSquares(img.affine, dirlevelnew_mm),0)
+		
+		artifact_dirnew = ea_sample_slice(img,'tra',extractradius,'vox',dirlevelnew_vx[:3],1,1)[0]
+		
+		center_dirnew = np.c_[(artifact_dirnew.shape[0])/2, (artifact_dirnew.shape[0])/2][0]
+		
+		anglenew, intensitynew, vectornew = intensityprofile(artifact_dirnew,center_dirnew,voxsize,radius)
+		
+		rollnew = roll + rollangles[realsolution][darkstarangle[realsolution]]
+		dirnew_angles = darkstar(rollnew,pitch,yaw,dirlevelnew_mm,radius)
+		dirnew_valleys = np.round(np.rad2deg(dirnew_angles), 0)
+		dirnew_valleys[dirnew_valleys > 359] = dirnew_valleys[dirnew_valleys > 359] - 360
+		
+		
+		solution = {}
+		solution['slice1'] = slice1
+		solution['slice2'] = artifact_dirnew
+		solution['voxsize'] = voxsize
+		solution['marker'] = marker_vx
+		solution['angles'] = angles
+		solution['finalpeak'] = finalpeak
+		solution['realsolution'] = realsolution
+		solution['valSlice1'] = valSlice1
+		solution['sprofil'] = sprofil
+		solution['valSlice2'] = valSlice2
+		solution['cog_trans_solution'] = cog_trans_solution
+		solution['cog_sag_solution'] = cog_sag_solution
+		solution['darkstar_solution'] = darkstar_solution
+		solution['asm_solution'] = asm_solution
+		solution['polar1'] = polar1
+		solution['sumintensitySolutions'] = sumintensitySolutions
+		solution['rollangleSolutions'] = rollangleSolutions
+		
 		generate_figure(solution)
 
 
 if __name__ == "__main__":
 	
+	# for debugging input
+	debug = False
+	if debug:
+		class Namespace:
+			def __init__(self, **kwargs):
+				self.__dict__.update(kwargs)
+		
+		input_ct = '/home/greydon/Documents/GitHub/DiODE_python/data/sub-P231_ses-post_acq-bscDirected_run-01_ct.nii.gz'
+		fcsv = '/home/greydon/Documents/GitHub/DiODE_python/data/sub-P231_coords.fcsv'
+		elmodel = 'BSCDirDB2202'
+		args = Namespace(input_ct=input_ct, fcsv=fcsv,elmodel=elmodel)
+	
 	# Input arguments
 	parser = argparse.ArgumentParser(description="Run DiODe directional lead orientation detection.")
 	
 	parser.add_argument("-i", "--input", dest="input_ct", help="Path to input CT file containing electrodes)")
+	parser.add_argument("-e", "--elmodel", dest="elmodel", help="The electrode type name.")
 	parser.add_argument("-f", "--fcsv", dest="fcsv", default=None, help="Path to input Slicer FCSV File (RAS-oriented)")
 	parser.add_argument("-lh", dest="lh", default=None, help="Comma seperated list of RAS coordinates for left head (x,y,z)")
 	parser.add_argument("-rh", dest="rh", default=None, help="Comma seperated list of RAS coordinates for right head (x,y,z)")
@@ -684,6 +979,24 @@ if __name__ == "__main__":
 
 def generate_figure(solution):
 	
+	for key,val in solution.items():
+		exec(key + '=val')
+	
+	subtitle_text_options={
+		'fontsize': 16, 
+		'fontweight': 'bold'
+		}
+	
+	text_options = {'horizontalalignment': 'center',
+					'verticalalignment': 'center',
+					'fontsize': 18,
+					'fontweight': 'bold'}
+	
+	surround_text_options={
+		'fontsize': 14, 
+		'fontweight': 'bold'
+		}
+
 	fig = plt.figure(figsize=(12,9))
 	ax = fig.add_subplot(231)
 	ax.imshow(slice1, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')

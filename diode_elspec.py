@@ -4,7 +4,8 @@
 import json
 
 electrodeModels={
-	"Medtronic B33005":{
+	"MDTDirB33005":{
+		"full_name": "Medtronic B33005",
 		"matfname": "medtronic_b33005",
 		"lead_diameter": 1.3,
 		"lead_color": 0.7,
@@ -60,7 +61,8 @@ electrodeModels={
 		],
 		"forstimulation": 1
 	},
-	"Medtronic B33015":{
+	"MDTDirB33015":{
+		"full_name": "Medtronic B33015",
 		"matfname": "medtronic_b33015",
 		"lead_diameter": 1.3,
 		"lead_color": 0.7,
@@ -116,7 +118,8 @@ electrodeModels={
 		],
 		"forstimulation": 1
 	},
-	"Boston Scientific Vercise Directed":{
+	"BSCDirDB2202":{
+		"full_name": "Boston Scientific Vercise Directed",
 		"matfname": "boston_vercise_directed",
 		"lead_diameter": 1.3,
 		"lead_color": 0.7,
@@ -172,7 +175,8 @@ electrodeModels={
 		],
 		"forstimulation": 1
 	},
-	"St. Jude Directed 6172 (short)":{
+	"SJMDir6172":{
+		"full_name": "St. Jude Directed 6172 (short)",
 		"matfname": "stjude_directed_05",
 		"lead_diameter": 1.27,
 		"lead_color": 0.7,
@@ -228,7 +232,8 @@ electrodeModels={
 		],
 		"forstimulation": 1
 	},
-	"St. Jude Directed 6173 (long)":{
+	"SJMDir6173":{
+		"full_name": "St. Jude Directed 6173 (long)",
 		"matfname": "stjude_directed_15",
 		"lead_diameter": 1.27,
 		"lead_color": 0.7,
@@ -286,8 +291,8 @@ electrodeModels={
 	}
 }
 
-json_output = json.dumps(electrodeModels, indent=4)
-with open('/home/greydon/Documents/GitHub/DiODE_python/diode_elspec.json', 'w') as fid:
-	fid.write(json_output)
-	fid.write('\n')
+# json_output = json.dumps(electrodeModels, indent=4)
+# with open('/home/greydon/Documents/GitHub/DiODE_python/diode_elspec.json', 'w') as fid:
+# 	fid.write(json_output)
+# 	fid.write('\n')
 			
