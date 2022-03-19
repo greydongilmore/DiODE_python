@@ -55,6 +55,7 @@ These python scripts replicate the Matlab implementation developed by Till Dembe
 
 Information about the algorithm can be found <a href="https://dx.doi.org/10.13140/RG.2.2.22417.76647" target="_blank"><strong>here</strong></a>.
 
+Not for commercial use! Only fully validated for Boston Scientific directional leads.
 
 ### Built With
 
@@ -119,7 +120,7 @@ The repository has the following scheme:
 ├── LICENSE
 ├── requirements.txt            # python libraries required to run these scripts
 ├── data
-|   ├── *nii.gz                 # sample CT images containing B.Sci directional electrodes
+   ├── *nii.gz                 # sample CT images containing B.Sci directional electrodes
 |   ├── *fcsv                   # associated RAS coordinates for the head/tail of each electrode
 |   └── imgs                    # default output colder for generated figures
 ├── DiODe.py                    # potentially cleaned-up version
@@ -151,7 +152,7 @@ Distributed under the GNU License. See [`LICENSE`](LICENSE)for more information.
 ## Contact
 
 IP and any questions:
-Till Dembek - till.dembek@uk-koeln.de
+Till Dembek - [@DembekTill](https://twitter.com/dembektill) - till.dembek@uk-koeln.de
 
 Conversion to Python:
 Greydon Gilmore - [@GilmoreGreydon](https://twitter.com/GilmoreGreydon) - greydon.gilmore@gmail.com
