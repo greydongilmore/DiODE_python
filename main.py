@@ -593,9 +593,6 @@ def intensityprofile(slice_,center,voxsize,radius):
 
 def generate_figure(solution, save_fig=True):
 	
-	for key,val in solution.items():
-		exec(key + '=val')
-	
 	subtitle_text_options={
 		'fontsize': 16, 
 		'fontweight': 'bold'
@@ -1189,8 +1186,7 @@ def main(args):
 		solution['darkstarangle'] = darkstarangle
 		solution['darkstarslice'] = darkstarslice
 		
-		return solution
-		#generate_figure(solution, False)
+		generate_figure(solution, False)
 
 
 #%%
@@ -1205,8 +1201,8 @@ if __name__ == "__main__":
 			def __init__(self, **kwargs):
 				self.__dict__.update(kwargs)
 		
-		input_ct = '/home/greydon/Documents/GitHub/DiODE_python/data/sub-P231_ses-post_acq-bscDirected_run-01_ct.nii.gz'
-		fcsv = '/home/greydon/Documents/GitHub/DiODE_python/data/sub-P231_coords.fcsv'
+		input_ct = '/home/greydon/Documents/GitHub/DiODE_python/data/sub-P235_ses-post_acq-bscDirected_run-02_ct.nii.gz'
+		fcsv = '/home/greydon/Documents/GitHub/DiODE_python/data/sub-P235_coords.fcsv'
 		elmodel = 'BSCDirDB2202'
 		args = Namespace(input_ct=input_ct, fcsv=fcsv,elmodel=elmodel)
 	
@@ -1222,7 +1218,7 @@ if __name__ == "__main__":
 	parser.add_argument("-rt", dest="rt", default=None, help="Comma seperated list of RAS coordinates for right tail (x,y,z)")
 	args = parser.parse_args()
 	
-	solution=main(args)
+	main(args)
 
 
 
