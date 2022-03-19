@@ -469,191 +469,201 @@ imgFp=ctpath
 marker=np.round(marker_vx[:3],0)
 segment=np.round(dirlevel2_vx[:3],0)
 
-def DiODe(imgFp, marker, segment):
+def main(args):
 	# Input arguments:
 	# (1) imgFp: string. the file name of the input Post-CT image
 	# (2) marker: list. The position of marker. Example: [243, 297, 107]
 	# (3) segment: list. The position of the proximal segments. Example: [248, 299, 100]
 
-	print("** Start **")
-	marker = np.asarray(marker).astype(int)
-	segment = np.asarray(segment).astype(int)
-	
-	unitvector_mm = (marker - segment)/np.linalg.norm(marker - segment)
-	polar_angle = math.degrees(math.acos(np.dot(unitvector_mm, [0, 0, 1])))
-	
-# 	assert abs(polar_angle) < 50, f"The angle between the lead and the slice " \
-# 								  f"normal is {polar_angle} degrees.\nNote that angles " \
-# 								  f"> 50 degrees could cause inaccurate orientation estimation."
-	img = nib.load(imgFp)
-	V = img.get_fdata()
-	header_info = img.header
-	dims = header_info['dim'][1:4]
-	voxsize = header_info['pixdim'][1:4]
-	assert voxsize[0] == voxsize[1], "The X and Y axis should have the same voxsize"
-
-	radius1 = 4  # radius for analysis at marker (default 3 mm)
-	radius2 = 8  # radius for analysis at proximal segments (default 8 mm)
-	extractradius = 30
-	noPeaks= 2
-	
-	# Initial orientation estimation at marker position
-	xi, yi= np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
-	zi = marker[2] * np.ones_like(xi)
-	orig_shape=xi.shape
-	for arr in (xi,yi,zi):
-		arr.shape=-1
-	
-	ima = np.empty(xi.shape, dtype=float)
-	map_coordinates(img.get_fdata(), (xi,yi,zi), order=2, output=ima)
-	slice1=ima.reshape(orig_shape)
-	
-	print("** Analyzing circular intensity profile at marker **")
-	nDegree = 360
-	xSlice1 = np.zeros(nDegree)
-	ySlice1 = np.zeros(nDegree)
-	angleSlice1 = np.zeros(nDegree)
-	valSlice1 = np.zeros(nDegree)
-	#f = interpolate.interp2d(np.arange(dims[0]), np.arange(dims[1]), slice1, kind='linear')
-	for theta in range(360):
-		xSlice1[theta] = radius1 / voxsize[0] * math.sin(math.radians(theta)) + marker[1]
-		ySlice1[theta] = radius1 / voxsize[0] * math.cos(math.radians(theta)) + marker[0]
-		angleSlice1[theta] = theta
-		valSlice1[theta] = slice1[int(xSlice1[theta]), int(ySlice1[theta])]
-	
-	
-	dangles,angles,sprofil = peak_FFT(valSlice1)
-	dvalleys,valleys,_ = peak_FFT(-valSlice1)
-	
-	
-	print("** Analyzing circular intensity profile at proximal segments **")
-	xi, yi= np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
-	zi = segment[2] * np.ones_like(xi)
-	orig_shape=xi.shape
-	for arr in (xi,yi,zi):
-		arr.shape=-1
-	
-	ima = np.empty(xi.shape, dtype=float)
-	map_coordinates(img.get_fdata(), (xi,yi,zi), order=2, output=ima)
-	slice2=ima.reshape(orig_shape)
-	valSlice2 = np.zeros(nDegree)
-	xSlice2 = np.zeros(nDegree)
-	ySlice2 = np.zeros(nDegree)
-	for theta in range(360):
-		xSlice2[theta] = radius2 / voxsize[1] * math.sin(math.radians(theta)) + segment[1]
-		ySlice2[theta] = radius2 / voxsize[0] * math.cos(math.radians(theta)) + segment[0]
-		valSlice2[theta] = slice2[int(xSlice2[theta]), int(ySlice2[theta])]
-	
-	
-	
-	corrections = np.arange(-30, 31)
-	nDegreeSeg = corrections.shape[0]
-	valSlice2Sim = np.zeros(nDegreeSeg)
-	init_angle = angles[1] + 90
-	init_angles = np.linspace(init_angle + corrections[0], init_angle + corrections[-1], nDegreeSeg)
-	intervals = [60, 120, 180, 240, 300, 360]
-	f2 = interpolate.interp2d(np.arange(dims[0]), np.arange(dims[1]), slice2, kind='linear')
-	for i in range(nDegreeSeg):
-		marker_angle = init_angles[i]
-		xStar=np.zeros(6)
-		yStar=np.zeros(6)
-		for j in range(6):
-			xStar[j] = radius2 * math.sin(math.radians(marker_angle + intervals[j])) + segment[1]
-			yStar[j] = radius2 * math.cos(math.radians(marker_angle + intervals[j])) + segment[0]
-			valSlice2Sim[i] += f2(xStar[j], yStar[j] )
-	
-	valSlice2Sim /= 6
-	final_correction = corrections[np.argmin(valSlice2Sim)]
-	observed_angles = angles + final_correction - 90
-	gamma = math.radians(observed_angles[0])
-	
-	
-	print(f"Corrected peak angle (in degrees): {final_correction}")
-	print(f"Observed roll angles at the axial plane (in degrees): {observed_angles[0]}, {observed_angles[1]}")
-
-	beta = math.asin(unitvector_mm[0])  # yaw
-	alpha = math.asin(unitvector_mm[1] / math.cos(beta))  # pitch
-	rolltmp=angle2roll(angles[0], beta, alpha)
-	polar1=np.rad2deg(math.atan2(np.linalg.norm(np.cross(np.r_[0,0,1],unitvector_mm[:3])),
-					   np.dot(np.r_[0,0,1],unitvector_mm[:3])))
-	polar2=-np.rad2deg(math.atan2(unitvector_mm[1],unitvector_mm[0]))+ 90
-	
-	M,_,_,_ = rollpitchyaw(rolltmp,alpha,beta)
-	yvec_mm = M.dot(np.r_[0,1,0])
-	xvec_mm = np.cross(unitvector_mm[:3], yvec_mm)
-	
-	marker_mm=np.round(img.affine.dot(np.append(marker.T,1)),0)
-	
-	asm_solution = calculateASM(slice1, marker, voxsize, valleys,angles)
-	
-	cog_trans_solution = calculateCOG(img, xvec_mm, yvec_mm, marker_mm, unitvector_mm,'trans',1)
-	
-	cog_sag_solution = calculateCOG(img, xvec_mm, yvec_mm, marker_mm, unitvector_mm,'sag',1)
-	
-	realsolution = cog_trans_solution
-	
-	finalpeak = angles[realsolution]
-	
-	rollangleSolutions=[]
-	sumintensitySolutions = []
-	
-	sumintensitynew=np.zeros(60)
-	rolls_rad={}
-	rolls_rad[0] = angle2roll(angles[0],beta,alpha)
-	rollangles=np.zeros(60)
-	for k in range(60):
-		roll_shift = k-30
-		rollangles[k] = rolls_rad[0] + np.deg2rad(roll_shift)
-		dirnew_angles = darkstar(rollangles[k],alpha,beta,segment,radius2)
-		sumintensitynew[k]=intensitypeaksdirmarker(valSlice2,dirnew_angles)
-	
-	
-	sumintensitySolutions.append(sumintensitynew)
-	rollangleSolutions.append(rollangles[np.argmin(sumintensitySolutions[0])])
-	
-	sumintensitynew=np.zeros(60)
-	rolls_rad[1] = angle2roll(angles[1],beta,alpha)
-	rollangles=np.zeros(60)
-	for k in range(60):
-		roll_shift = k-30
-		rollangles[k] = rolls_rad[1] + np.deg2rad(roll_shift)
-		dirnew_angles = darkstar(rollangles[k],alpha,beta,segment,radius2)
-		sumintensitynew[k]=intensitypeaksdirmarker(valSlice2,dirnew_angles)
-	
-	sumintensitySolutions.append(sumintensitynew)
-	rollangleSolutions.append(rollangles[np.argmin(sumintensitySolutions[1])])
-	
-	if min(sumintensitySolutions[0]) < min(sumintensitySolutions[1]):
-		print('Darkstar decides for peak 1')
-		darkstar_solution = 0
+	marker_dict = {}
+	if args.fcsv is not None:
+		marker_dict = read_fcsv(args.fcsv)
 	else:
-		print('Darkstar decides for peak 2')
-		darkstar_solution = 1
-	
-	
-	
-	
-	dirnew_angles = darkstar(rollangles[np.argmin(sumintensitynew)],alpha,beta,segment,radius2)
-	dirValleys = np.round(np.rad2deg(dirnew_angles), 0)
-	dirValleys[dirValleys > 359] = dirValleys[dirValleys > 359] - 360
-	
-	
-	gamma = math.atan((math.sin(gamma) * math.cos(alpha)) / \
-					  (math.cos(gamma) * math.cos(beta) - math.sin(alpha) * math.sin(beta) * math.sin(gamma)))
-	print(f"Pitch, yaw, roll angles (in degrees): {math.degrees(alpha)}, {math.degrees(beta)}, {math.degrees(gamma)}")
+		if all(x is not None for x in (args.lh,args.lt)):
+			marker_dict['left']={
+				'head': args.lh,
+				'tail': args.lt,
+			}
+		if all(x is not None for x in (args.rh,args.rt)):
+			marker_dict['right']={
+				'head': args.rh,
+				'tail': args.rt,
+			}
 
-	marker_orientation = [-math.sin(gamma) * math.cos(beta),
-						  math.cos(gamma) * math.cos(alpha) + math.sin(alpha) * math.sin(beta) * math.sin(gamma),
-						  -math.cos(gamma) * math.sin(alpha) + math.sin(gamma) * math.sin(beta) * math.cos(alpha)]
-	print("** Estimated marker orientation **")
-	print(f"Isotropic: [{marker_orientation[0]}, {marker_orientation[1]}, {marker_orientation[2]}]")
+	for iside in list(marker_dict):
+		marker = np.asarray(iside['head']).astype(int)
+		segment = np.asarray(iside['tail']).astype(int)
+		
+		unitvector_mm = (marker - segment)/np.linalg.norm(marker - segment)
+		polar_angle = math.degrees(math.acos(np.dot(unitvector_mm, [0, 0, 1])))
+		
+	# 	assert abs(polar_angle) < 50, f"The angle between the lead and the slice " \
+	# 								  f"normal is {polar_angle} degrees.\nNote that angles " \
+	# 								  f"> 50 degrees could cause inaccurate orientation estimation."
+		img = nib.load(args.input_ct)
+		V = img.get_fdata()
+		header_info = img.header
+		dims = header_info['dim'][1:4]
+		voxsize = header_info['pixdim'][1:4]
+		assert voxsize[0] == voxsize[1], "The X and Y axis should have the same voxsize"
 
-	marker_orientation /= voxsize
-	marker_orientation = marker_orientation / np.linalg.norm(marker_orientation)
-	print(f"With current spacing: [{marker_orientation[0]}, {marker_orientation[1]}, {marker_orientation[2]}]")
-	print("** Done **")
-	
-	generate_figure(solution)
+		radius1 = 4  # radius for analysis at marker (default 3 mm)
+		radius2 = 8  # radius for analysis at proximal segments (default 8 mm)
+		extractradius = 30
+		noPeaks= 2
+		
+		# Initial orientation estimation at marker position
+		xi, yi= np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
+		zi = marker[2] * np.ones_like(xi)
+		orig_shape=xi.shape
+		for arr in (xi,yi,zi):
+			arr.shape=-1
+		
+		ima = np.empty(xi.shape, dtype=float)
+		map_coordinates(img.get_fdata(), (xi,yi,zi), order=2, output=ima)
+		slice1=ima.reshape(orig_shape)
+		
+		print("Extract intensity profile from marker artifact")
+		nDegree = 360
+		xSlice1 = np.zeros(nDegree)
+		ySlice1 = np.zeros(nDegree)
+		angleSlice1 = np.zeros(nDegree)
+		valSlice1 = np.zeros(nDegree)
+		#f = interpolate.interp2d(np.arange(dims[0]), np.arange(dims[1]), slice1, kind='linear')
+		for theta in range(360):
+			xSlice1[theta] = radius1 / voxsize[0] * math.sin(math.radians(theta)) + marker[1]
+			ySlice1[theta] = radius1 / voxsize[0] * math.cos(math.radians(theta)) + marker[0]
+			angleSlice1[theta] = theta
+			valSlice1[theta] = slice1[int(xSlice1[theta]), int(ySlice1[theta])]
+		
+		
+		dangles,angles,sprofil = peak_FFT(valSlice1)
+		dvalleys,valleys,_ = peak_FFT(-valSlice1)
+		
+		print("Extract intensity profile from segments artifact")
+
+		xi, yi= np.meshgrid(np.arange(dims[0]),np.arange(dims[1]))
+		zi = segment[2] * np.ones_like(xi)
+		orig_shape=xi.shape
+		for arr in (xi,yi,zi):
+			arr.shape=-1
+		
+		ima = np.empty(xi.shape, dtype=float)
+		map_coordinates(img.get_fdata(), (xi,yi,zi), order=2, output=ima)
+		slice2=ima.reshape(orig_shape)
+		valSlice2 = np.zeros(nDegree)
+		xSlice2 = np.zeros(nDegree)
+		ySlice2 = np.zeros(nDegree)
+		for theta in range(360):
+			xSlice2[theta] = radius2 / voxsize[1] * math.sin(math.radians(theta)) + segment[1]
+			ySlice2[theta] = radius2 / voxsize[0] * math.cos(math.radians(theta)) + segment[0]
+			valSlice2[theta] = slice2[int(xSlice2[theta]), int(ySlice2[theta])]
+		
+		
+		corrections = np.arange(-30, 31)
+		nDegreeSeg = corrections.shape[0]
+		valSlice2Sim = np.zeros(nDegreeSeg)
+		init_angle = angles[1] + 90
+		init_angles = np.linspace(init_angle + corrections[0], init_angle + corrections[-1], nDegreeSeg)
+		intervals = [60, 120, 180, 240, 300, 360]
+		f2 = interpolate.interp2d(np.arange(dims[0]), np.arange(dims[1]), slice2, kind='linear')
+		for i in range(nDegreeSeg):
+			marker_angle = init_angles[i]
+			xStar=np.zeros(6)
+			yStar=np.zeros(6)
+			for j in range(6):
+				xStar[j] = radius2 * math.sin(math.radians(marker_angle + intervals[j])) + segment[1]
+				yStar[j] = radius2 * math.cos(math.radians(marker_angle + intervals[j])) + segment[0]
+				valSlice2Sim[i] += f2(xStar[j], yStar[j] )
+		
+		valSlice2Sim /= 6
+		final_correction = corrections[np.argmin(valSlice2Sim)]
+		observed_angles = angles + final_correction - 90
+		gamma = math.radians(observed_angles[0])
+		
+		print(f"Corrected peak angle (in degrees): {final_correction}")
+		print(f"Observed roll angles at the axial plane (in degrees): {observed_angles[0]}, {observed_angles[1]}")
+
+		beta = math.asin(unitvector_mm[0])  # yaw
+		alpha = math.asin(unitvector_mm[1] / math.cos(beta))  # pitch
+		rolltmp=angle2roll(angles[0], beta, alpha)
+		polar1=np.rad2deg(math.atan2(np.linalg.norm(np.cross(np.r_[0,0,1],unitvector_mm[:3])),
+						   np.dot(np.r_[0,0,1],unitvector_mm[:3])))
+		polar2=-np.rad2deg(math.atan2(unitvector_mm[1],unitvector_mm[0]))+ 90
+		
+		M,_,_,_ = rollpitchyaw(rolltmp,alpha,beta)
+		yvec_mm = M.dot(np.r_[0,1,0])
+		xvec_mm = np.cross(unitvector_mm[:3], yvec_mm)
+		
+		marker_mm=np.round(img.affine.dot(np.append(marker.T,1)),0)
+		
+		asm_solution = calculateASM(slice1, marker, voxsize, valleys,angles)
+		
+		cog_trans_solution = calculateCOG(img, xvec_mm, yvec_mm, marker_mm, unitvector_mm,'trans',1)
+		
+		cog_sag_solution = calculateCOG(img, xvec_mm, yvec_mm, marker_mm, unitvector_mm,'sag',1)
+		
+		realsolution = cog_trans_solution
+		
+		finalpeak = angles[realsolution]
+		
+		rollangleSolutions=[]
+		sumintensitySolutions = []
+		
+		sumintensitynew=np.zeros(60)
+		rolls_rad={}
+		rolls_rad[0] = angle2roll(angles[0],beta,alpha)
+		rollangles=np.zeros(60)
+		for k in range(60):
+			roll_shift = k-30
+			rollangles[k] = rolls_rad[0] + np.deg2rad(roll_shift)
+			dirnew_angles = darkstar(rollangles[k],alpha,beta,segment,radius2)
+			sumintensitynew[k]=intensitypeaksdirmarker(valSlice2,dirnew_angles)
+		
+		sumintensitySolutions.append(sumintensitynew)
+		rollangleSolutions.append(rollangles[np.argmin(sumintensitySolutions[0])])
+		
+		sumintensitynew=np.zeros(60)
+		rolls_rad[1] = angle2roll(angles[1],beta,alpha)
+		rollangles=np.zeros(60)
+		for k in range(60):
+			roll_shift = k-30
+			rollangles[k] = rolls_rad[1] + np.deg2rad(roll_shift)
+			dirnew_angles = darkstar(rollangles[k],alpha,beta,segment,radius2)
+			sumintensitynew[k]=intensitypeaksdirmarker(valSlice2,dirnew_angles)
+		
+		sumintensitySolutions.append(sumintensitynew)
+		rollangleSolutions.append(rollangles[np.argmin(sumintensitySolutions[1])])
+		
+		if min(sumintensitySolutions[0]) < min(sumintensitySolutions[1]):
+			print('Darkstar decides for peak 1')
+			darkstar_solution = 0
+		else:
+			print('Darkstar decides for peak 2')
+			darkstar_solution = 1
+		
+		
+		dirnew_angles = darkstar(rollangles[np.argmin(sumintensitynew)],alpha,beta,segment,radius2)
+		dirValleys = np.round(np.rad2deg(dirnew_angles), 0)
+		dirValleys[dirValleys > 359] = dirValleys[dirValleys > 359] - 360
+		
+		gamma = math.atan((math.sin(gamma) * math.cos(alpha)) / \
+						  (math.cos(gamma) * math.cos(beta) - math.sin(alpha) * math.sin(beta) * math.sin(gamma)))
+		
+		print(f"Pitch, yaw, roll angles (in degrees): {math.degrees(alpha)}, {math.degrees(beta)}, {math.degrees(gamma)}")
+
+		marker_orientation = [-math.sin(gamma) * math.cos(beta),
+							  math.cos(gamma) * math.cos(alpha) + math.sin(alpha) * math.sin(beta) * math.sin(gamma),
+							  -math.cos(gamma) * math.sin(alpha) + math.sin(gamma) * math.sin(beta) * math.cos(alpha)]
+		
+		print("Estimated marker orientation")
+		print(f"Isotropic: [{marker_orientation[0]}, {marker_orientation[1]}, {marker_orientation[2]}]")
+
+		marker_orientation /= voxsize
+		marker_orientation = marker_orientation / np.linalg.norm(marker_orientation)
+		print(f"With current spacing: [{marker_orientation[0]}, {marker_orientation[1]}, {marker_orientation[2]}]")
+				
+		generate_figure(solution)
 
 
 if __name__ == "__main__":
@@ -662,11 +672,11 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Run DiODe directional lead orientation detection.")
 	
 	parser.add_argument("-i", "--input", dest="input_ct", help="Path to input CT file containing electrodes)")
-	parser.add_argument("-f", "--fcsv", dest="fcsv", help="Path to input Slicer FCSV File (RAS-oriented)")
-	parser.add_argument("-lh", "--input", dest="input_ct", help="Comma seperated list of RAS coordinates for left head (x,y,z)")
-	parser.add_argument("-rh", "--input", dest="input_ct", help="Comma seperated list of RAS coordinates for right head (x,y,z)")
-	parser.add_argument("-lt", "--input", dest="input_ct", help="Comma seperated list of RAS coordinates for left tail (x,y,z)")
-	parser.add_argument("-rt", "--input", dest="input_ct", help="Comma seperated list of RAS coordinates for right tail (x,y,z)")
+	parser.add_argument("-f", "--fcsv", dest="fcsv", default=None, help="Path to input Slicer FCSV File (RAS-oriented)")
+	parser.add_argument("-lh", dest="lh", default=None, help="Comma seperated list of RAS coordinates for left head (x,y,z)")
+	parser.add_argument("-rh", dest="rh", default=None, help="Comma seperated list of RAS coordinates for right head (x,y,z)")
+	parser.add_argument("-lt", dest="lt", default=None, help="Comma seperated list of RAS coordinates for left tail (x,y,z)")
+	parser.add_argument("-rt", dest="rt", default=None, help="Comma seperated list of RAS coordinates for right tail (x,y,z)")
 	args = parser.parse_args()
 	
 	main(args)
