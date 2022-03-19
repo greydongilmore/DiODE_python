@@ -652,128 +652,134 @@ def DiODe(imgFp, marker, segment):
 	marker_orientation = marker_orientation / np.linalg.norm(marker_orientation)
 	print(f"With current spacing: [{marker_orientation[0]}, {marker_orientation[1]}, {marker_orientation[2]}]")
 	print("** Done **")
+	
+	generate_figure(solution)
 
 
 if __name__ == "__main__":
-	imgFp = "/home/liuh26/Documents/TestData/test.nii"
-	marker = [243, 297, 107]
-	proxSg = [248, 299, 100]
-	DiODe(imgFp, marker, proxSg)
+	
+	# Input arguments
+	parser = argparse.ArgumentParser(description="Run DiODe directional lead orientation detection.")
+	
+	parser.add_argument("-i", "--input", dest="input_ct", help="Path to input CT file containing electrodes)")
+	parser.add_argument("-f", "--fcsv", dest="fcsv", help="Path to input Slicer FCSV File (RAS-oriented)")
+	parser.add_argument("-lh", "--input", dest="input_ct", help="Comma seperated list of RAS coordinates for left head (x,y,z)")
+	parser.add_argument("-rh", "--input", dest="input_ct", help="Comma seperated list of RAS coordinates for right head (x,y,z)")
+	parser.add_argument("-lt", "--input", dest="input_ct", help="Comma seperated list of RAS coordinates for left tail (x,y,z)")
+	parser.add_argument("-rt", "--input", dest="input_ct", help="Comma seperated list of RAS coordinates for right tail (x,y,z)")
+	args = parser.parse_args()
+	
+	main(args)
 
 
-
-fig = plt.figure(figsize=(12,9))
-ax = fig.add_subplot(231)
-ax.imshow(slice1, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
-
-
-
-ax = fig.add_subplot(232)
-ax.imshow(slice1, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
-plt.xlim([marker[0]-30,marker[0]+30])
-plt.ylim([marker[1]-30,marker[1]+30])
-ax.plot(ySlice1,xSlice1, ':g')
-ax.scatter(ySlice1[angles.tolist()],xSlice1[angles.tolist()],
-	s=80, edgecolors='g',color='none',alpha=1)
-
-ax.scatter(ySlice1[finalpeak],xSlice1[finalpeak],
-	s=80, color='g',alpha=1)
-
-for k in valleys:
-	xp=[marker[0],(marker[0] + 3 * (ySlice1[k]-marker[0]))]
-	yp=[marker[1],(marker[1] + 3 * (xSlice1[k]-marker[1]))]
-	ax.plot(xp,yp, '--r')
-
-
-ax.quiver(marker[0],marker[1],ySlice1[finalpeak] - marker[0],xSlice1[finalpeak] - marker[1],
-	linewidth=2,ec='g', angles='xy', scale=.5,scale_units='xy')
-
-ax.scatter(marker[0],marker[1],s=100, color='m',alpha=1)
-
-xlimit=ax.get_xlim()
-ylimit=ax.get_ylim()
-ax.text(np.mean(xlimit),ylimit[1]-5,'A', color='b',**text_options)
-ax.text(np.mean(xlimit),ylimit[0]+5,'P', color='b',**text_options)
-ax.text(xlimit[1]-5,np.mean(ylimit),'L', color='b',**text_options)
-ax.text(xlimit[0]+5,np.mean(ylimit),'R',color='b', **text_options)
-ax.set_title('Axial View', **subtitle_text_options)
-
-ax = fig.add_subplot(233)
-ax.plot(np.arange(0, 360), valSlice1)
-ax.plot(np.arange(0, 360), sprofil)
-ax.set_xlim(0,361)
-
-ax.set_ylim(np.min([valSlice1, valSlice2])-50,
-		  np.max([valSlice1, valSlice2])+50)
-
-ax.scatter(angleSlice1[dangles.tolist()],valSlice1[dangles.tolist()],
-	s=120, edgecolors='g', color='none', alpha=1)
-
-ax.scatter(angleSlice1[angles.tolist()],valSlice1[angles.tolist()],
-		s=120, facecolors='g', edgecolors='g',alpha=1)
-
-ax.set_title('Intensity Profile', **subtitle_text_options)
-
-ax = fig.add_subplot(234)
-ax.imshow(slice2, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
-ax.set_xlim([segment[0]-30,segment[0]+30])
-ax.set_ylim([segment[1]-30,segment[1]+30])
-
-ax.set_xticks([]),ax.set_yticks([])
-ax.set_title('Directional Level', **subtitle_text_options)
-ax.plot(ySlice2,xSlice2, ':r')
-ax.scatter(ySlice2[dirValleys.astype(int).tolist()],xSlice2[dirValleys.astype(int).tolist()],
-		   s=80, color='r',alpha=1)
-
-for k in dirValleys:
-	xp=[segment[0],(segment[0] + 1.5 * (ySlice2[int(k)]-segment[0]))]
-	yp=[segment[1],(segment[1] + 1.5 * (xSlice2[int(k)]-segment[1]))]
-	ax.plot(xp, yp, '-r')
-
-xlimit=ax.get_xlim()
-ylimit=ax.get_ylim()
-ax.text(np.mean(xlimit),ylimit[1]-5,'A', color='b',**text_options)
-ax.text(np.mean(xlimit),ylimit[0]+5,'P', color='b',**text_options)
-ax.text(xlimit[1]-5,np.mean(ylimit),'L', color='b',**text_options)
-ax.text(xlimit[0]+5,np.mean(ylimit),'R',color='b', **text_options)
-ax.set_title('Directional Level', **subtitle_text_options)
-
-sol_tran=f"COM-Transversal Solution: {rolls_rad[cog_trans_solution]:.2f}"
-sol_sag=f"COM-Sagittal Solution: {rolls_rad[cog_sag_solution]:.2f}"
-sol_star=f"STARS Solution: {rolls_rad[darkstar_solution]:.2f}"
-sol_asm=f"ASM Solution: {rolls_rad[asm_solution]:.2f}"
-pol_ang=f"Polar Angle: {abs(polar1):.0f}"
-resol=f"CT Resolution: {voxsize[0]:.2f}x{voxsize[1]:.2f}x{voxsize[2]:.2f} mm"
-
-ax.text(-.05, -.3,sol_tran, transform=ax.transAxes, **surround_text_options)
-ax.text(-.05, -.4,sol_sag, transform=ax.transAxes, **surround_text_options)
-ax.text(-.05, -.5,sol_star, transform=ax.transAxes, **surround_text_options)
-ax.text(-.05, -.6,sol_asm, transform=ax.transAxes, **surround_text_options)
-ax.text(-.05, -.7,pol_ang, transform=ax.transAxes, **surround_text_options)
-ax.text(-.05, -.8,resol, transform=ax.transAxes, **surround_text_options)
-
-
-
-
-ax = fig.add_subplot(235)
-ax.plot(np.arange(0, 360), valSlice2)
-ax.set_xlim(0,361)
-
-ax.set_ylim(np.min([valSlice1, valSlice2])-50,
-		  np.max([valSlice1, valSlice2])+50)
-
-ax = fig.add_subplot(236)
-ax.plot(np.rad2deg(rollangleSolutions[realsolution]),
-		solution[side]['sumintensitynew_final'][solution[side]['realsolution']])
-ax.set_yticks([])
-ax.plot(np.rad2deg(solution[side]['rollangles_final'][int(not(solution[side]['realsolution']))]),
-		solution[side]['sumintensitynew_final'][int(not(solution[side]['realsolution']))],
-		color='r',alpha=1)
-
-
-
-sub_str=f"{os.path.basename(imgFp).split('_')[0]}"
-
-plt.suptitle(sub_str, fontsize=20, fontweight='bold')
-
-fig.subplots_adjust(hspace=.3, bottom=0.25)
+def generate_figure(solution):
+	
+	fig = plt.figure(figsize=(12,9))
+	ax = fig.add_subplot(231)
+	ax.imshow(slice1, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
+	
+	ax = fig.add_subplot(232)
+	ax.imshow(slice1, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
+	plt.xlim([marker[0]-30,marker[0]+30])
+	plt.ylim([marker[1]-30,marker[1]+30])
+	ax.plot(ySlice1,xSlice1, ':g')
+	ax.scatter(ySlice1[angles.tolist()],xSlice1[angles.tolist()],
+		s=80, edgecolors='g',color='none',alpha=1)
+	
+	ax.scatter(ySlice1[finalpeak],xSlice1[finalpeak],
+		s=80, color='g',alpha=1)
+	
+	for k in valleys:
+		xp=[marker[0],(marker[0] + 3 * (ySlice1[k]-marker[0]))]
+		yp=[marker[1],(marker[1] + 3 * (xSlice1[k]-marker[1]))]
+		ax.plot(xp,yp, '--r')
+	
+	
+	ax.quiver(marker[0],marker[1],ySlice1[finalpeak] - marker[0],xSlice1[finalpeak] - marker[1],
+		linewidth=2,ec='g', angles='xy', scale=.5,scale_units='xy')
+	
+	ax.scatter(marker[0],marker[1],s=100, color='m',alpha=1)
+	
+	xlimit=ax.get_xlim()
+	ylimit=ax.get_ylim()
+	ax.text(np.mean(xlimit),ylimit[1]-5,'A', color='b',**text_options)
+	ax.text(np.mean(xlimit),ylimit[0]+5,'P', color='b',**text_options)
+	ax.text(xlimit[1]-5,np.mean(ylimit),'L', color='b',**text_options)
+	ax.text(xlimit[0]+5,np.mean(ylimit),'R',color='b', **text_options)
+	ax.set_title('Axial View', **subtitle_text_options)
+	
+	ax = fig.add_subplot(233)
+	ax.plot(np.arange(0, 360), valSlice1)
+	ax.plot(np.arange(0, 360), sprofil)
+	ax.set_xlim(0,361)
+	
+	ax.set_ylim(np.min([valSlice1, valSlice2])-50,
+			  np.max([valSlice1, valSlice2])+50)
+	
+	ax.scatter(angleSlice1[dangles.tolist()],valSlice1[dangles.tolist()],
+		s=120, edgecolors='g', color='none', alpha=1)
+	
+	ax.scatter(angleSlice1[angles.tolist()],valSlice1[angles.tolist()],
+			s=120, facecolors='g', edgecolors='g',alpha=1)
+	
+	ax.set_title('Intensity Profile', **subtitle_text_options)
+	
+	ax = fig.add_subplot(234)
+	ax.imshow(slice2, cmap='gray',alpha=1, vmin=-50, vmax=150,origin='lower')
+	ax.set_xlim([segment[0]-30,segment[0]+30])
+	ax.set_ylim([segment[1]-30,segment[1]+30])
+	
+	ax.set_xticks([]),ax.set_yticks([])
+	ax.set_title('Directional Level', **subtitle_text_options)
+	ax.plot(ySlice2,xSlice2, ':r')
+	ax.scatter(ySlice2[dirValleys.astype(int).tolist()],xSlice2[dirValleys.astype(int).tolist()],
+			   s=80, color='r',alpha=1)
+	
+	for k in dirValleys:
+		xp=[segment[0],(segment[0] + 1.5 * (ySlice2[int(k)]-segment[0]))]
+		yp=[segment[1],(segment[1] + 1.5 * (xSlice2[int(k)]-segment[1]))]
+		ax.plot(xp, yp, '-r')
+	
+	xlimit=ax.get_xlim()
+	ylimit=ax.get_ylim()
+	ax.text(np.mean(xlimit),ylimit[1]-5,'A', color='b',**text_options)
+	ax.text(np.mean(xlimit),ylimit[0]+5,'P', color='b',**text_options)
+	ax.text(xlimit[1]-5,np.mean(ylimit),'L', color='b',**text_options)
+	ax.text(xlimit[0]+5,np.mean(ylimit),'R',color='b', **text_options)
+	ax.set_title('Directional Level', **subtitle_text_options)
+	
+	sol_tran=f"COM-Transversal Solution: {rolls_rad[cog_trans_solution]:.2f}"
+	sol_sag=f"COM-Sagittal Solution: {rolls_rad[cog_sag_solution]:.2f}"
+	sol_star=f"STARS Solution: {rolls_rad[darkstar_solution]:.2f}"
+	sol_asm=f"ASM Solution: {rolls_rad[asm_solution]:.2f}"
+	pol_ang=f"Polar Angle: {abs(polar1):.0f}"
+	resol=f"CT Resolution: {voxsize[0]:.2f}x{voxsize[1]:.2f}x{voxsize[2]:.2f} mm"
+	
+	ax.text(-.05, -.3,sol_tran, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.4,sol_sag, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.5,sol_star, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.6,sol_asm, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.7,pol_ang, transform=ax.transAxes, **surround_text_options)
+	ax.text(-.05, -.8,resol, transform=ax.transAxes, **surround_text_options)
+	
+	
+	ax = fig.add_subplot(235)
+	ax.plot(np.arange(0, 360), valSlice2)
+	ax.set_xlim(0,361)
+	
+	ax.set_ylim(np.min([valSlice1, valSlice2])-50,
+			  np.max([valSlice1, valSlice2])+50)
+	
+	ax = fig.add_subplot(236)
+	ax.plot(np.rad2deg(rollangleSolutions[realsolution]),
+			solution[side]['sumintensitynew_final'][solution[side]['realsolution']])
+	ax.set_yticks([])
+	ax.plot(np.rad2deg(solution[side]['rollangles_final'][int(not(solution[side]['realsolution']))]),
+			solution[side]['sumintensitynew_final'][int(not(solution[side]['realsolution']))],
+			color='r',alpha=1)
+	
+	sub_str=f"{os.path.basename(imgFp).split('_')[0]}"
+	
+	plt.suptitle(sub_str, fontsize=20, fontweight='bold')
+	
+	fig.subplots_adjust(hspace=.3, bottom=0.25)
