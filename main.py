@@ -11,8 +11,11 @@ from skimage import measure
 from sklearn.linear_model import LinearRegression
 import os
 import argparse
+from collections import ChainMap
 
+os.chdir(r'C:\Users\greydongilmore\Documents\GitHub\DiODE_python')
 from diode_elspec import electrodeModels
+
 
 
 def ea_sample_slice(vol, tracor, wsize, voxmm, coords, el, interp_order=2):
@@ -510,21 +513,36 @@ def leastSquares(A, y):
 	return sol
 
 def determineFCSVCoordSystem(input_fcsv):
-	# need to determine if file is in RAS or LPS
-	# loop through header to find coordinate system
-	coordFlag = re.compile("# CoordinateSystem")
-	coord_sys = None
-	with open(input_fcsv, "r+") as fid:
-		rdr = csv.DictReader(filter(lambda row: row[0] == "#", fid))
-		row_cnt = 0
+	coordFlag = re.compile('# CoordinateSystem')
+	verFlag = re.compile('# Markups fiducial file version')
+	headFlag = re.compile('# columns')
+	coord_sys=None
+	headFin=None
+	ver_fin=None
+	
+	with open(input_fcsv, 'r+') as fid:
+		rdr = csv.DictReader(filter(lambda row: row[0]=='#', fid))
+		row_cnt=0
 		for row in rdr:
-			cleaned_dict = {k: v for k, v in row.items() if k is not None}
-			if any(coordFlag.match(x) for x in list(cleaned_dict.values())):
-				coordString = list(filter(coordFlag.match, list(cleaned_dict.values())))
-				assert len(coordString) == 1
-				coord_sys = coordString[0].split("=")[-1].strip()
-			row_cnt += 1
-	return coord_sys
+			cleaned_dict={k:v for k,v in row.items()}
+			if None in list(cleaned_dict):
+				cleaned_dict['# columns'] = cleaned_dict.pop(None)
+			
+			if any(coordFlag.match(x) for x in list(cleaned_dict.values()) if not isinstance(x,list)):
+				coordString = list(filter(coordFlag.match,  list(cleaned_dict.values())))
+				assert len(coordString)==1
+				coord_sys = coordString[0].split('=')[-1].strip()
+			if any(verFlag.match(x) for x in list(cleaned_dict)):
+				verString = list(filter(verFlag.match,  list(cleaned_dict)))
+				assert len(verString)==1
+				ver_fin = verString[0].split('=')[-1].strip()
+			if any(headFlag.match(x) for x in list(cleaned_dict)):
+				headString = list(filter(headFlag.match, list(cleaned_dict)))
+				headFin=['id']+cleaned_dict[headString[0]]
+			row_cnt +=1
+	
+	return coord_sys,headFin
+
 
 def pixLookup(slice_,y,x,zpad, RGB=3):
 	"""
@@ -792,6 +810,24 @@ def generate_figure(solution, save_fig=True):
 		plt.savefig(base_name + f"_side-{solution['side']}_white.png",transparent=False,dpi=300)
 		plt.close()
 
+debug = False
+if debug:
+	class dotdict(dict):
+		"""dot.notation access to dictionary attributes"""
+		__getattr__ = dict.get
+		__setattr__ = dict.__setitem__
+		__delattr__ = dict.__delitem__
+	
+	class Namespace:
+		def __init__(self, **kwargs):
+			self.__dict__.update(kwargs)
+	
+	
+	input_ct=r"C:\Users\greydongilmore\Documents\data\emory\DBS\derivatives\diode\sub-MD0116\sub-MD0116_ses-post_acq-Electrode_run-01_ct.nii.gz"
+	elmodel='BSCDirDB2202'
+	fcsv=r"C:\Users\greydongilmore\Documents\data\emory\DBS\derivatives\diode\sub-MD0116\electrodes.fcsv"
+	
+	args = Namespace(fcsv=fcsv, input_ct=input_ct,elmodel=elmodel)
 
 def main(args):
 	# Input arguments:
@@ -801,10 +837,15 @@ def main(args):
 	
 	marker_dict = {}
 	if args.fcsv is not None:
-		fcsv_df = pd.read_table(args.fcsv, sep=",", header=2)
-		coordSys = determineFCSVCoordSystem(args.fcsv)
+		coord_sys,headFin=determineFCSVCoordSystem(args.fcsv)
+		fcsv_df = pd.read_csv(args.fcsv, skiprows=3, header=None)
+		head_info=dict(ChainMap(*[{i:x} for i,x in enumerate(headFin)]))
+		if fcsv_df.shape[1] != len(head_info):
+			fcsv_df = fcsv_df.loc[:,:len(head_info)-1]
+			
+		fcsv_df=fcsv_df.iloc[:,:].rename(columns=head_info).reset_index(drop=True)
 		
-		if any(x in coordSys for x in {"LPS", "1"}):
+		if any(x in coord_sys for x in {"LPS", "1"}):
 			fcsv_df["x"] = -1 * fcsv_df["x"]  # flip orientation in x
 			fcsv_df["y"] = -1 * fcsv_df["y"]  # flip orientation in y
 		
@@ -923,9 +964,10 @@ def main(args):
 		polar1 = math.degrees(math.acos(np.dot(unitvector_mm, [0, 0, 1,0])))
 		polar2 = -np.rad2deg(math.atan2(unitvector_mm[1],unitvector_mm[0]))+ 90
 		
-		assert abs(polar1) < 50, f"The angle between the lead and the slice " \
+		if abs(polar1) > 50:
+			print(f"The angle between the lead and the slice " \
 									  f"normal is {polar1} degrees.\nNote that angles " \
-									  f"> 50 degrees could cause inaccurate orientation estimation."
+									  f"> 50 degrees could cause inaccurate orientation estimation.")
 		
 		fftdiff = []
 		checkslices = np.linspace(-1,1,5) # check neighboring slices for marker +/- 1mm in .5mm steps
